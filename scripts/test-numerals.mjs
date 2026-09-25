@@ -8,8 +8,10 @@ const ok = (label, cond, got) => {
   if (!cond) console.log(`FAIL  ${label}  got: ${JSON.stringify(got)}`);
 };
 
-const ZERO = '٠'; // ٠
-const NINE = '٩'; // ٩
+const ZERO = '۰'; // ۰ extended Arabic-Indic (ar renders this set)
+const NINE = '۹'; // ۹
+const PLAIN_ZERO = '٠'; // ٠ plain Arabic-Indic, still accepted on input
+const PLAIN_NINE = '٩'; // ٩
 const DEV_ZERO = '०'; // ०
 const FW_NINE = '９'; // ９
 const UR_NINE = '۹'; // ۹
@@ -21,7 +23,8 @@ for (const l of languages) {
     en: '0123456789', es: '0123456789', fr: '0123456789', de: '0123456789',
     pt: '0123456789', it: '0123456789', nl: '0123456789', ru: '0123456789',
     tr: '0123456789', id: '0123456789',
-    ar: ZERO + '١٢٣٤٥٦٧٨' + NINE,
+    // Arabic uses Eastern Arabic-Indic (U+066x); Urdu uses Extended (U+06Fx).
+    ar: PLAIN_ZERO + '١٢٣٤٥٦٧٨' + PLAIN_NINE,
     ur: '۰۱۲۳۴۵۶۷۸' + UR_NINE,
     hi: DEV_ZERO + '१२३४५६७८९',
     ja: '０１２３４５６７８' + FW_NINE, ko: '０１２３４５６７８' + FW_NINE, zh: '０１２３４５６７８' + FW_NINE,
@@ -43,8 +46,9 @@ console.log('\nINPUT PARSING');
 for (const l of languages) {
   const native = toNumerals('4071', l.code);
   ok(`${l.code} native -> ascii`, fromNumerals(native) === '4071', fromNumerals(native));
-  // cross-script: Arabic-Indic typed while the UI is Japanese, etc.
-  ok(`${l.code} accepts ar digits`, fromNumerals(ZERO + NINE + '٠١') === '0901', fromNumerals(ZERO + NINE + '٠١'));
+  // cross-script: digits typed or pasted from another keyboard than the active one
+  ok(`${l.code} accepts plain arabic-indic`, fromNumerals(PLAIN_ZERO + PLAIN_NINE + '٠١') === '0901', fromNumerals(PLAIN_ZERO + PLAIN_NINE + '٠١'));
+  ok(`${l.code} accepts extended arabic-indic`, fromNumerals(ZERO + NINE + '۰۱') === '0901', fromNumerals(ZERO + NINE + '۰۱'));
   ok(`${l.code} accepts hi digits`, fromNumerals(DEV_ZERO + '९९') === '099', fromNumerals(DEV_ZERO + '९९'));
   ok(`${l.code} accepts ur digits`, fromNumerals('۰۱' + UR_NINE) === '019', fromNumerals('۰۱' + UR_NINE));
   ok(`${l.code} accepts fullwidth`, fromNumerals('１２３４') === '1234', fromNumerals('１２３４'));
@@ -67,14 +71,15 @@ ok('hi 12345', num(12345, 'hi') === toNumerals('12,345', 'hi'), num(12345, 'hi')
 ok('en 999 untouched', num(999, 'en') === '999', num(999, 'en'));
 ok('en 0', num(0, 'en') === '0', num(0, 'en'));
 ok('negative', num(-4200, 'en') === '-4,200', num(-4200, 'en'));
-ok('ar digits + arabic sep', num(1234567, 'ar') === `١٬٢٣٤٬٥٦٧`, num(1234567, 'ar'));
+ok('ar uses eastern arabic-indic + U+066C', num(1234567, 'ar') === '١٬٢٣٤٬٥٦٧', num(1234567, 'ar'));
+ok('ur uses extended arabic-indic + U+066C', num(1234567, 'ur') === toNumerals('1٬234٬567', 'ur'), num(1234567, 'ur'));
 ok('en 30 (a price)', num(30, 'en') === '30', num(30, 'en'));
 ok('ar 30 (a price)', num(30, 'ar') === toNumerals('30', 'ar'), num(30, 'ar'));
 
 // Padding
 console.log('\nPADDING');
 ok('pad en 7 -> 07', pad(7, 2, 'en') === '07', pad(7, 2, 'en'));
-ok('pad ar 7 -> ٠٧', pad(7, 2, 'ar') === ZERO + '٧', pad(7, 2, 'ar'));
+ok('pad ar 7 -> 0+7', pad(7, 2, 'ar') === toNumerals('07', 'ar'), pad(7, 2, 'ar'));
 ok('pad ja 12 -> １２', pad(12, 2, 'ja') === '１２', pad(12, 2, 'ja'));
 ok('pad no truncation', pad(123, 2, 'en') === '123', pad(123, 2, 'en'));
 

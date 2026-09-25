@@ -16,7 +16,13 @@ export function Provider({children}:{children:React.ReactNode}){
  const t=useCallback((key:string)=>translate(state.locale,key),[state.locale]);
  const toast=useCallback((key:string)=>{setNotice(key);},[]);
  useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),4200);return()=>clearTimeout(id);},[notice]);
- useEffect(()=>{localStorage.setItem('exotic-v1',JSON.stringify(state));document.documentElement.dataset.theme=state.theme;document.documentElement.lang=state.locale;document.documentElement.dir=isRTL(state.locale)?'rtl':'ltr';document.documentElement.dataset.motion=state.motion?'reduced':'full';},[state]);
+ useEffect(()=>{localStorage.setItem('exotic-v1',JSON.stringify(state));document.documentElement.dataset.theme=state.theme;document.documentElement.lang=state.locale;document.documentElement.dir=isRTL(state.locale)?'rtl':'ltr';document.documentElement.dataset.motion=state.motion?'reduced':'full';
+  // The tab title and meta description are English in index.html, so they are
+  // rewritten per locale. The title composes the translated brand with the
+  // translated tagline instead of duplicating the brand across sixteen columns.
+  const brandName=translate(state.locale,'brand');
+  document.title=brandName+' — '+translate(state.locale,'docTitle');
+  document.querySelector('meta[name=description]')?.setAttribute('content',translate(state.locale,'docDesc'));},[state]);
  const clients=useMemo(()=>{if(!state.config.url||!state.config.key)return {solo:null,arena:null};try{return {solo:createClient(state.config.url,state.config.key,{auth:{storageKey:'exotic-solo-auth',detectSessionInUrl:false}}),arena:createClient(state.config.url,state.config.key,{auth:{storageKey:'exotic-arena-auth',detectSessionInUrl:false}})};}catch{return {solo:null,arena:null};}},[state.config.url,state.config.key]);
  useEffect(()=>{const cleanup:(()=>void)[]=[];(['solo','arena'] as Mode[]).forEach(mode=>{const client=clients[mode];if(!client){setSessions(s=>({...s,[mode]:null}));return;}client.auth.getSession().then(({data})=>setSessions(s=>({...s,[mode]:data.session})));const {data}=client.auth.onAuthStateChange((_event,session)=>setSessions(s=>({...s,[mode]:session})));cleanup.push(()=>data.subscription.unsubscribe());});return()=>cleanup.forEach(f=>f());},[clients]);
  const refresh=useCallback(async(mode:Mode)=>{const client=clients[mode],user=sessions[mode]?.user;if(!client||!user)return;

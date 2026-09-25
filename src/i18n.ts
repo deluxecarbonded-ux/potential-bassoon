@@ -1,14 +1,30 @@
 export const languages = [{code:'en',name:'English'},{code:'ar',name:'العربية'},{code:'es',name:'Español'},{code:'fr',name:'Français'},{code:'de',name:'Deutsch'},{code:'pt',name:'Português'},{code:'it',name:'Italiano'},{code:'nl',name:'Nederlands'},{code:'ru',name:'Русский'},{code:'tr',name:'Türkçe'},{code:'hi',name:'हिन्दी'},{code:'ja',name:'日本語'},{code:'ko',name:'한국어'},{code:'zh',name:'中文'},{code:'id',name:'Bahasa Indonesia'},{code:'ur',name:'اردو'}];
-// The product name is a proper noun, so it is deliberately NOT translated, exactly
-// like "Supabase" in Settings. It lives here as a single source of truth so the
-// wordmark and the small brand labels cannot drift apart.
-export const brand = 'Exotic';
+export const brand = 'Exotic'; // English fallback; the UI uses t('brand')
 // Locales written right-to-left. Kept here so the document direction, the equation
 // bidi override and the numeral work all agree on one list.
 const rtlLocales = ['ar','ur'];
 export function isRTL(lang:string){ return rtlLocales.includes(lang); }
 
+// Arabic sets the question mark on the baseline mirror image, U+061F, rather than
+// the Latin "?", and the puzzle placeholders and decorative "?" glyphs follow suit.
+// Display only: a placeholder is never parsed, and a typed answer is digits only.
+//
+// Arabic only, deliberately. U+061F is bidi class AL, a LETTER, so it takes part in
+// right-to-left ordering, whereas the Latin "?" is a neutral and does not. In Arabic
+// that changes nothing, because those equations already lay out right-to-left. In
+// Urdu it is harmful: Urdu numerals are class EN, so with the ASCII mark those
+// equations rendered correctly, and swapping in U+061F moved the mark to the far end
+// of the line - "۵ + ؟ = ۹" displayed as "۵ + ۹ = ؟". Measured, then reverted.
+const markLocales = ['ar'];
+const ARABIC_QUESTION_MARK = '؟';
+export function localiseMark(text:string, lang:string){
+  return markLocales.includes(lang) ? text.replace(/\?/g, ARABIC_QUESTION_MARK) : text;
+}
+
 const rows = String.raw`
+brand|Exotic|إكزوتيك|Exótico|Exotique|Exotisch|Exótico|Esotico|Exotisch|Экзотик|Egzotik|एक्ज़ोटिक|エキゾティック|엑조틱|异域|Eksotik|ایگزوتک
+docTitle|A little logic. A lot of possibility.|منطق قليل. إمكانات لا نهائية.|Un poco de lógica. Mucha posibilidad.|Un peu de logique. Beaucoup de possibilités.|Eine Prise Logik. Viele Möglichkeiten.|Um pouco de lógica. Muita possibilidade.|Un po' di logica. Molte possibilità.|Een beetje logica. Veel mogelijkheden.|Немного логики. Много возможностей.|Biraz mantık. Çok olasılık.|थोड़ी तर्क। ढेरों संभावनाएँ।|少しの論理。たくさんの可能性。|조금의 논리. 많은 가능성.|少许逻辑，无限可能。|Sedikit logika. Banyak kemungkinan.|تھوڑی منطق۔ بہت امکانات۔
+docDesc|Four digits. Infinite possibilities. A beautifully simple game for a wonderfully complex mind.|أربعة أرقام. إمكانات لا نهائية. لعبة بسيطة بجمال لفكر معقّد.|Cuatro dígitos. Posibilidades infinitas. Un juego sencillo para una mente compleja.|Quatre chiffres. Possibilités infinies. Un jeu d'une simplicité-syntaxe pour un esprit complexe.|Vier Ziffern. Unendliche Möglichkeiten. Ein wunderbar einfaches Spiel für einen wunderbar komplexen Geist.|Quatro dígitos. Possibilidades infinitas. Um jogo lindamente simples para uma mente complexa.|Quattro cifre. Infinite possibilità. Un gioco bellamente semplice per una mente complessa.|Vier cijfers. Oneindige mogelijkheden. Een prachtig eenvoudig spel voor een verbluffend ingewikkeld verstand.|Четыре цифры. Бесконечные возможности. Простая игра для сложного ума.|Dört rakam. Sonsuz olasılık. Zihni karmaşık olanlar için benzersiz derecede basit bir oyun.|चार अंक। अनंत संभावनाएँ। एक सुंदर सरल खेल, एक अद्भुत जटिल मस्तिष्क के लिए।|4桁。無限の可能性。素晴らしい頭脳のための、美しいシンプルなゲーム。|네 자리. 무한한 가능성. 복잡한 사고를 위한 아름답게 단순한 게임.|四位数字。无限可能。为复杂头脑打造的绝美简约游戏。|Empat digit. Kemungkinan tak terbatas. Permainan sederhana yang indah untuk pikiran yang rumit.|چار ہندسے۔ لامحدود امکانات۔ پیچیدہ ذہن کے لیے خوبصورت سادہ کھیل۔
 play|PLAY|العب|JUGAR|JOUER|SPIELEN|JOGAR|GIOCA|SPELEN|ИГРАТЬ|OYNA|खेलें|プレイ|플레이|开始|MAIN|کھیلیں
 personal|YOUR SPACE|مساحتك|TU ESPACIO|VOTRE ESPACE|DEIN BEREICH|SEU ESPAÇO|IL TUO SPAZIO|JOUW RUIMTE|ВАШ РАЗДЕЛ|ALANIN|आपका स्थान|マイスペース|내 공간|个人空间|RUANG ANDA|آپ کی جگہ
 home|Overview|نظرة عامة|Resumen|Vue d’ensemble|Übersicht|Visão geral|Panoramica|Overzicht|Обзор|Genel bakış|अवलोकन|概要|개요|总览|Ringkasan|جائزہ
@@ -162,17 +178,35 @@ for (const line of rows.trim().split('\n')) { const [key,...values] = line.split
 // Digit glyphs are data rather than words, but they are per-locale, so they are
 // translated in the table above like every other string.
 //
+// Arabic and Urdu use the Extended Arabic-Indic digits, drawn from the bundled
+// ArabicNumerals subset (see styles.css) because the ordinary Arabic-Indic zero is a
+// solid dot in every everyday Arabic typeface, while U+06F0 in that face is a
+// hollow ring. The plain block is never displayed but stays accepted on input.
+//
 // Group separators and grouping sizes are kept in code, not the table, because two
 // of them are invisible characters that would be unmaintainable in a pipe-delimited
 // row. Values follow CLDR. CJK locales use fullwidth digits, the conventional form
 // for a digit-centric puzzle, which also keeps a four-digit code visually aligned.
 const ASCII_DIGITS = '0123456789';
+// Arabic uses the Eastern Arabic-Indic digits (U+0660-U+0669) and Urdu uses the
+// Extended Arabic-Indic digits (U+06F0-U+06F9) that Urdu and Persian use natively.
+// Both are drawn from the bundled ArabicNumerals subset, which keeps all ten
+// numerals on one advance width so codes and keypads stay in column.
+//
+// The two zeros differ in shape and only one of them can be changed. U+06F0 in this
+// face is a hollow ring; U+0660 is a solid dot, and it is a dot in EVERY Arabic
+// typeface that exists - Amiri, Cairo, Scheherazade, Noto Naskh, Noto Nastaliq
+// Urdu and thirty more were all measured. Arabic therefore keeps its dot zero,
+// which is the correct Eastern Arabic form, and Urdu keeps its ring.
 const groupSeparators: Record<string,string> = {
-  en: ',', ar: '٬', es: '.', fr: ' ', de: '.', pt: '.', it: '.', nl: '.',
-  ru: ' ', tr: '.', hi: ',', ja: ',', ko: ',', zh: ',', id: '.', ur: '٬',
+  en: ',', ar: '٬', es: '.', fr: ' ', de: '.', pt: '.', it: '.', nl: '.',
+  ru: ' ', tr: '.', hi: ',', ja: ',', ko: ',', zh: ',', id: '.', ur: '٬',
 };
 // [least-significant group size, size of the remaining groups]. Devanagari counts in
 // lakh/crore (12,34,567), everything else groups by threes.
+// Arabic pairs Latin digits with a plain comma: the Arabic thousands separator
+// (U+066C) belongs with Arabic-Indic digits, and "1٬234" beside Latin digits reads
+// as a typo. Urdu keeps U+066C because its digits are Arabic-Indic.
 const groupSizes: Record<string,[number,number]> = { hi: [3, 2] };
 
 const digitSets: Record<string,string> = {};
@@ -187,6 +221,11 @@ for (const l of languages) {
 const incomingDigits: Record<string,string> = {};
 for (const set of Object.values(digitSets)) for (let i=0;i<10;i++) incomingDigits[set[i]] = ASCII_DIGITS[i];
 for (let i=0;i<10;i++) incomingDigits[ASCII_DIGITS[i]] = ASCII_DIGITS[i];
+// Both Arabic-Indic blocks stay accepted on input. Arabic renders U+0660-U+0669 and
+// Urdu U+06F0-U+06F9, but the two blocks draw the same glyphs, so content typed or
+// pasted in either one still parses no matter which locale is active.
+for (let i=0;i<10;i++) incomingDigits[String.fromCharCode(0x06F0+i)] = ASCII_DIGITS[i];
+for (let i=0;i<10;i++) incomingDigits[String.fromCharCode(0x0660+i)] = ASCII_DIGITS[i];
 
 /** Rewrites ASCII digits in `text` to the locale's script. Display only. */
 export function toNumerals(text:string, lang:string){
