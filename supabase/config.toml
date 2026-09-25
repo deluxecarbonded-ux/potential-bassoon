@@ -1,0 +1,29 @@
+project_id = "exotic"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public"]
+
+[db]
+major_version = 15
+
+[realtime]
+enabled = true
+
+[auth]
+enabled = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[functions.solo-action]
+verify_jwt = true
+
+[functions.room-action]
+verify_jwt = true
+
+[functions.ai-hint]
+verify_jwt = true

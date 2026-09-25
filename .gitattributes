@@ -1,0 +1,18 @@
+# Normalise line endings so the repo does not churn between Windows and Unix.
+* text=auto eol=lf
+
+*.ts text
+*.tsx text
+*.mjs text
+*.js text
+*.json text
+*.css text
+*.html text
+*.md text
+*.sql text
+*.toml text
+*.yml text
+
+*.png binary
+*.jpg binary
+*.ico binary
