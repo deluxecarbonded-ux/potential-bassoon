@@ -30,6 +30,7 @@
     "test:realtime": "node --env-file-if-exists=.env scripts/test-realtime.mjs",
     "test:locales": "node --experimental-strip-types scripts/test-locales.mjs",
     "test:ai-hint": "node --env-file-if-exists=.env scripts/test-ai-hint.mjs",
+    "test:hint-tidy": "node --experimental-strip-types scripts/test-hint-tidy.mjs",
     "session:make": "node --env-file-if-exists=.env scripts/make-session.mjs",
     "user:delete": "node --env-file-if-exists=.env scripts/delete-test-user.mjs"
   },
