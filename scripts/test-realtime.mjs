@@ -31,6 +31,16 @@ const admin = createClient(url, keys.find((k) => k.name === 'service_role').api_
 const throwaway = () => 'Rt-' + Math.random().toString(36).slice(2) + '!x';
 const made = [];
 
+// The nine public tables in the supabase_realtime publication. Kept as a list rather
+// than spread through the test so the subscription covers all of them at once, and so
+// the "nothing is published by accident" check below has something to compare against.
+// The three private tables are deliberately absent: two of them hold the answers to
+// every puzzle in the game, and publishing them would broadcast those answers to
+// every connected client.
+const PUBLISHED = ['rooms', 'room_players', 'round_questions', 'wallets', 'inventory',
+  'profiles', 'solo_progress', 'transactions', 'catalog'];
+const WITHHELD = ['round_answers', 'solo_challenges', 'ai_usage'];
+
 /** Subscribes as `jwt` and records every postgres_changes event that arrives. */
 function listen(jwt, name) {
   const received = [];
@@ -39,8 +49,10 @@ function listen(jwt, name) {
   });
   const channel = client.channel(name);
   // Every filter has to be registered before subscribe(); realtime-js throws on
-  // adding a postgres_changes callback afterwards.
-  for (const table of ['rooms', 'room_players', 'wallets', 'inventory', 'profiles', 'solo_progress']) {
+  // adding a postgres_changes callback afterwards. All nine published tables are
+  // listed, so a table that is added to the publication but not covered here fails
+  // this test rather than being assumed to work.
+  for (const table of PUBLISHED) {
     channel.on('postgres_changes', { event: '*', schema: 'public', table }, (p) => received.push(p));
   }
   channel.subscribe();
@@ -124,6 +136,43 @@ try {
   await admin.from('wallets').update({ balance: 300 }).eq('user_id', alice.id).eq('mode', 'arena');
   const wUpd = await host.until((p) => p.table === 'wallets' && p.eventType === 'UPDATE');
   ok('a wallet UPDATE reaches the owner', !!wUpd, wUpd ? `balance->${wUpd.new?.balance} (was ${before.data?.balance})` : 'none within 15s');
+
+  console.log('\nTHE THREE TABLES ADDED TO THE PUBLICATION');
+  // These were published after the original six. A publication entry that does not
+  // deliver is the exact failure this whole test exists to catch, so each one is
+  // driven by a real write rather than assumed from its presence in the publication.
+  const qIns = await host.until((p) => p.table === 'round_questions' && p.eventType === 'INSERT');
+  ok('round_questions INSERT reaches a room member', !!qIns,
+    qIns ? 'delivered' : 'none within 15s - the start above wrote a question');
+
+  // A purchase, not a match win: the room was never finished, so no win transaction
+  // exists yet, and buy_item writes a 'purchase:' entry the moment it succeeds.
+  const buy = await room(alice.jwt, { action: 'buy', item: 'moon' });
+  ok('the purchase went through', buy.success === true, JSON.stringify(buy));
+  const tIns = await host.until((p) => p.table === 'transactions' && p.eventType === 'INSERT');
+  ok('transactions INSERT reaches the owner', !!tIns,
+    tIns ? 'delivered' : 'none within 15s - the purchase above wrote a ledger entry');
+
+  // catalog is public seed data, so a temporary row is enough to prove delivery. It is
+  // removed again immediately, and nothing references it - inventory's foreign key
+  // points the other way and no inventory row names it.
+  const tempItem = { id: 'rt' + Date.now().toString(36), mode: 'arena', price: 999, consumable: false };
+  const { error: catErr } = await admin.from('catalog').insert(tempItem);
+  ok('a temporary catalog row was inserted', !catErr, catErr?.message);
+  const cIns = await host.until((p) => p.table === 'catalog' && p.eventType === 'INSERT');
+  ok('catalog INSERT reaches subscribers', !!cIns, cIns ? `event=${cIns.eventType}` : 'none within 15s');
+  await admin.from('catalog').delete().eq('id', tempItem.id).eq('mode', 'arena');
+  const cDel = await host.until((p) => p.table === 'catalog' && p.eventType === 'DELETE');
+  ok('catalog DELETE reaches subscribers too', !!cDel, cDel ? 'delivered' : 'none within 15s');
+
+  console.log('\nNOTHING IS PUBLISHED BY ACCIDENT');
+  const seen = [...new Set(host.received.map((p) => p.table))].sort();
+  ok('nothing arrived for a table that is not published',
+    !seen.some((t) => WITHHELD.includes(t)),
+    `withheld: ${WITHHELD.join(', ')}`);
+  ok('every table that delivered is one of the published ones',
+    seen.every((t) => PUBLISHED.includes(t)),
+    `delivered: ${seen.join(', ') || 'none'}`);
 } finally {
   console.log('\nCLEANUP');
   await host?.close();

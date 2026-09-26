@@ -17,6 +17,8 @@
     "db:verify": "node --env-file-if-exists=.env scripts/db-verify.mjs",
     "db:migrate": "node --env-file-if-exists=.env scripts/db-migrate.mjs",
     "db:rls": "node --env-file-if-exists=.env scripts/db-rls-sim.mjs",
+    "audit:db": "node --env-file-if-exists=.env scripts/audit-db.mjs",
+    "verify:schema": "node --env-file-if-exists=.env scripts/verify-schema.mjs",
     "secrets:set": "node --env-file-if-exists=.env scripts/set-secrets.mjs",
     "secrets:prune": "node --env-file-if-exists=.env scripts/prune-vault.mjs",
     "smoke:app": "node --env-file-if-exists=.env scripts/app-smoke.mjs",
