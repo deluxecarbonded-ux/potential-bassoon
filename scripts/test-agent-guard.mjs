@@ -75,10 +75,16 @@ console.log('\nCREDENTIALS THE AGENT MUST NOT WRITE');
 const filler = (n, seed = 0) =>
   Array.from({ length: n }, (_, i) => 'abcdefghijklmnopqrstuvwxyz0123456789'[(i + seed) % 36]).join('');
 const jwt = () => ['eyJhbGciOiJIUzI1NiIs', filler(14, 2), '.', filler(26, 5), '.', filler(30, 9)].join('');
+// Defined once and used from both the table below and the later "a secret never
+// reaches the writer" case, which used to call orKey() with no such binding in scope
+// and took the whole suite down before it finished. The sibling agent tests define
+// it the same way; here it had been written out inline instead and only one of the
+// two call sites was ever updated.
+const orKey = () => ['sk-or-v1', '-', filler(26, 7)].join('');
 const SECRETS = [
   ['a service_role JWT', `const k = "${jwt()}";`],
   ['a Supabase PAT', `token: '${['sbp', '_', filler(30, 4)].join('')}'`],
-  ['an OpenRouter key', `const OPENROUTER_API_KEY = '${['sk-or-v1', '-', filler(26, 7)].join('')}'`],
+  ['an OpenRouter key', `const OPENROUTER_API_KEY = '${orKey()}'`],
   ['a GitHub token', `auth: '${['ghp', '_', filler(36, 11)].join('')}'`],
   ['a GitHub fine-grained token', `auth: '${['github', '_pat_', filler(40, 13)].join('')}'`],
   ['an AWS key', `aws: '${['AKIA', filler(16, 3).toUpperCase()].join('')}'`],
