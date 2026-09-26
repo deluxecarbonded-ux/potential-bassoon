@@ -441,6 +441,46 @@ comment on table private.ai_usage is
   'not published to realtime: it is one account''s usage of a shared free tier.';
 
 
+-- ----------------------------------------------------------------------------
+--  private.ai_provider_usage - how much of each free provider's day is spent
+--
+--  Every free AI provider caps something, and the smallest cap this project can use is
+--  OpenRouter's 50 requests a day. The router spreads work across every free tier
+--  available so that one running out does not stop the app, and this table is how it
+--  knows where the headroom is.
+--
+--  It is a table rather than a counter in the function because an edge function isolate
+--  is short-lived and there are many of them: in memory, the tally is forgotten the
+--  moment one recycles and every new isolate rediscovers the same exhausted provider by
+--  being refused by it. Persisted, a provider that said "no more today" is still known
+--  to be finished after a cold start, a deploy, or an hour.
+--
+--  Separate from private.ai_usage on purpose. That asks "may this account ask for a
+--  hint", which is a product rule - ten a day keeps a shared free tier fair. This asks
+--  "which provider can still serve anyone", which is an operational fact.
+--
+--  tokens_in is kept because the binding constraint for the build agent is tokens per
+--  minute, not requests per day: a provider with thousands of requests left cannot serve
+--  a twenty-thousand-token plan if its per-minute ceiling is six thousand.
+-- ----------------------------------------------------------------------------
+
+create table private.ai_provider_usage (
+  provider      text        not null,
+  day           date        not null default current_date,
+  requests      integer     not null default 0,
+  tokens_in     integer     not null default 0,
+  tokens_out    integer     not null default 0,
+  exhausted     boolean     not null default false,
+  exhausted_at  timestamptz,
+  updated_at    timestamptz not null default now(),
+  primary key (provider, day)
+);
+
+comment on table private.ai_provider_usage is
+  'Daily spend per free AI provider, so the router sends work where there is still '
+  'headroom instead of rediscovering an exhausted provider by being refused by it. '
+  'Not published to realtime: it is operational, not a player''s business.';
+
 -- ============================================================================
 --  SECTION 3. Functions
 --
@@ -1046,6 +1086,73 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+--  public.record_ai_provider_use and public.ai_provider_today - the AI quota ledger
+--
+--  These two are in public and everything they touch is in private, which is deliberate
+--  and worth understanding before anyone tidies it up.
+--
+--  PostgREST only searches the schemas it is configured to expose, and on this project
+--  that is public. A function in private is unreachable from an edge function no matter
+--  what it is granted: the call fails with "could not find the function in the schema
+--  cache", naming public, because public is all it looked in. So the functions live where
+--  PostgREST can see them and the row they read and write does not move.
+--
+--  They are SECURITY DEFINER because their bodies touch private.ai_provider_usage, which
+--  the calling role may not use. That is the same reason ensure_profile and
+--  is_room_member are security definer, and it is safe for the same reasons: the
+--  search_path is pinned to the empty string so the body can only reach what it names in
+--  full, the arguments carry no user identity so there is nothing for a caller to act
+--  on, and EXECUTE is revoked from anon and authenticated below. Nothing a client could
+--  do with either of these is harmful - one increments a global counter and the other
+--  reads global counters back - and a client cannot call either.
+--
+--  The write increments rather than replaces, so two concurrent requests cannot both
+--  read the same count and write it back. An exhausted provider is not resurrected by
+--  usage: once a provider says no more today, the rest of today goes elsewhere.
+-- ----------------------------------------------------------------------------
+
+create or replace function public.record_ai_provider_use(
+  p_provider text,
+  p_requests integer default 1,
+  p_tokens_in integer default 0,
+  p_tokens_out integer default 0,
+  p_exhausted boolean default false
+) returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  insert into private.ai_provider_usage(provider, day, requests, tokens_in, tokens_out, exhausted, exhausted_at, updated_at)
+  values (
+    p_provider, current_date, p_requests, p_tokens_in, p_tokens_out,
+    p_exhausted, case when p_exhausted then clock_timestamp() else null end, clock_timestamp()
+  )
+  on conflict (provider, day) do update
+    set requests = private.ai_provider_usage.requests + excluded.requests,
+        tokens_in = private.ai_provider_usage.tokens_in + excluded.tokens_in,
+        tokens_out = private.ai_provider_usage.tokens_out + excluded.tokens_out,
+        exhausted = private.ai_provider_usage.exhausted or excluded.exhausted,
+        exhausted_at = case
+          when excluded.exhausted and private.ai_provider_usage.exhausted_at is null
+            then clock_timestamp()
+          else private.ai_provider_usage.exhausted_at
+        end,
+        updated_at = clock_timestamp();
+$$;
+
+create or replace function public.ai_provider_today()
+returns table (provider text, requests integer, tokens_in integer, tokens_out integer, exhausted boolean)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select u.provider, u.requests, u.tokens_in, u.tokens_out, u.exhausted
+  from private.ai_provider_usage u
+  where u.day = current_date;
+$$;
+
+-- ----------------------------------------------------------------------------
 --  public.rls_auto_enable - a new table cannot be shipped unprotected
 --
 --  Fires after CREATE TABLE in the public schema and turns RLS on. Without it,
@@ -1231,9 +1338,10 @@ create policy current_question on public.round_questions
 --  user_id as an argument instead of trusting anything else.
 -- ----------------------------------------------------------------------------
 
-alter table private.solo_challenges enable row level security;
-alter table private.round_answers   enable row level security;
-alter table private.ai_usage        enable row level security;
+alter table private.solo_challenges   enable row level security;
+alter table private.round_answers     enable row level security;
+alter table private.ai_usage          enable row level security;
+alter table private.ai_provider_usage enable row level security;
 
 comment on table private.solo_challenges is
   'RLS enabled with no policy, which means deny. service_role bypasses RLS, so the '
@@ -1311,8 +1419,22 @@ grant execute on function public.room_action(uuid, text, jsonb) to service_role;
 revoke all on function public.ai_hint_context(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.ai_hint_context(uuid, uuid) to service_role;
 
+-- The AI quota ledger. Readable only by the edge functions, which is what makes the
+-- router's memory of a spent provider trustworthy: a client cannot inflate a counter and
+-- lock the AI features out for everyone.
+revoke all on function public.record_ai_provider_use(text, integer, integer, integer, boolean) from public, anon, authenticated;
+grant execute on function public.record_ai_provider_use(text, integer, integer, integer, boolean) to service_role;
+
+revoke all on function public.ai_provider_today() from public, anon, authenticated;
+grant execute on function public.ai_provider_today() to service_role;
+
 -- Owner only. See the note above the function.
 revoke all on function public.rls_auto_enable() from public, anon, authenticated, service_role;
+
+-- Exactly one role reaches the private schema directly, and it is not service_role. The
+-- two accounting functions above are security definer precisely so that the role running
+-- the edge functions does not need it.
+revoke usage on schema private from service_role;
 
 
 -- ============================================================================
@@ -1355,6 +1477,9 @@ alter table public.catalog         replica identity full;
 --   private.round_answers    - every match answer
 --   private.solo_challenges  - every live solo answer
 --   private.ai_usage         - one account's usage of a shared free tier
+--   private.ai_provider_usage - how much of the shared free AI allowance is left, which
+--                               is operational rather than anyone's business, and which
+--                               would be a map of how hard the platform is being pushed
 
 comment on publication supabase_realtime is
   'Every table a client legitimately needs to watch. The three private tables are '

@@ -1,5 +1,5 @@
 import {context,json,errorResponse} from '../_shared/http.ts';
-import {askFree,openRouterKey} from '../_shared/router.ts';
+import {askFree,accountVia,capacity} from '../_shared/router.ts';
 import {boundaries,review,mayTouch} from '../_shared/guard.ts';
 import {PLAN_SYSTEM,extractOperations,selectFiles,renderContext} from '../_shared/plan.ts';
 
@@ -37,10 +37,10 @@ Deno.serve(async(req:Request)=>{
  try{
   // The agent carries whole file contents, so it needs a far larger body than a game
   // action does. The caller is still a signed-in player either way.
-  const {user,body}=await context(req,{maxBytes:1572864});
+  const {db,user,body}=await context(req,{maxBytes:1572864});
   const op=String(body?.op||'');
-  if(op==='status')return json(req,{...status(),user:user.id});
-  if(op==='plan')return json(req,await plan(body));
+  if(op==='status')return json(req,{...status(),user:user.id,capacity:await capacity()});
+  if(op==='plan')return json(req,await plan(db,body));
   if(op==='apply')return json(req,await apply(req,body));
   throw Error('error');
  }catch(e){return errorResponse(req,e);}
@@ -133,7 +133,8 @@ function encodeBase64(text:string):string{
 
 /* ------------------------------------------------------------------ planning */
 
-async function plan(body:Record<string,unknown>){
+async function plan(db:{rpc:(fn:string,args:Record<string,unknown>)=>Promise<unknown>},body:Record<string,unknown>){
+ accountVia(db);
  const text=String(body?.instruction||'').trim();
  if(text.length<4||text.length>4000)throw Error('error');
 
@@ -156,16 +157,21 @@ async function plan(body:Record<string,unknown>){
  // The model is told what it will not be allowed to touch rather than left to guess. The
  // guard is what enforces it, but a model that knows the boundary proposes fewer
  // operations that have to be thrown away, and every one of those costs a retry.
- const {text:reply,model}=await askFree(openRouterKey(),[
+ // requestTokens is the real size of this request, which is what lets the router skip a
+ // provider whose per-minute ceiling is below it instead of spending an attempt finding
+ // out. A planning request is by far the largest thing this project sends.
+ const requestTokens=Math.round(renderContext(contents).length/3)+400;
+ const {text:reply,model,provider}=await askFree([
   {role:'system',content:PLAN_SYSTEM},
   {role:'user',content:`Here are some of the project's files:\n\n${renderContext(contents)}\n\nRequested change: ${text}`},
  ],{
   maxTokens:4000,
   // A patch is work that should come out the same way twice, and a reasoning model
-  // narrating its own deliberation into `content` produces a reply no JSON parser wants.
+  // narrating its own deliberation produces a reply no JSON parser wants.
   temperature:0.2,
   reasoning:{effort:'none'},
   label:'agent-plan',
+  requestTokens,
   accept:(t)=>!extractOperations(t).fatal,
  });
 
@@ -177,6 +183,7 @@ async function plan(body:Record<string,unknown>){
   operations:parsed.operations,
   dropped:parsed.dropped,
   model,
+  provider,
   via,
   consideredFiles:contents.map((f)=>f.path),
   // What the person is about to be asked to approve, in words, before they see it.

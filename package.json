@@ -35,6 +35,7 @@
     "test:router": "node --experimental-strip-types scripts/test-router.mjs",
     "test:agent-guard": "node --experimental-strip-types scripts/test-agent-guard.mjs",
     "test:diff": "node --experimental-strip-types scripts/test-diff.mjs",
+    "test:providers": "node --env-file-if-exists=.env scripts/test-providers.mjs",
     "test:agent-plan": "node --experimental-strip-types scripts/test-agent-plan.mjs",
     "test:agent": "node --env-file-if-exists=.env scripts/test-agent.mjs",
     "agent:serve": "node --experimental-strip-types scripts/agent-bridge.mjs",

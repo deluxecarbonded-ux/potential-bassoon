@@ -11,17 +11,30 @@
 // you did not ask for and then confirm.
 import React,{useEffect,useRef,useState} from 'react';
 import {useApp} from './state';
+import {num} from './i18n';
 import {summarise} from './diff';
 import {Check,Plus,Trash2,Pencil,ChevronDown,Loader2,ShieldCheck,TriangleAlert,ArrowRight,RefreshCw,FileCode2} from 'lucide-react';
 
 type Op={op:'create'|'update'|'delete';path:string;content?:string;note?:string};
 type Plan={summary:string;operations:Op[];dropped:Record<number,string>;model?:string;via?:string;consideredFiles?:string[];preview:{create:number;update:number;delete:number}};
-type Status={canWrite:boolean;route:string;writeNote:string;boundaries:{writableRoots:string[];neverWritten:string[];blockedSegments:string[];secretsRefused:string[]}};
+type Status={canWrite:boolean;route:string;writeNote:string;capacity?:Capacity;boundaries:{writableRoots:string[];neverWritten:string[];blockedSegments:string[];secretsRefused:string[]}};
+
+/**
+ * What is left of the free AI allowance, per provider. Not decoration: the honest answer
+ * to "why did the AI say it was resting" is a number per provider that goes down, and
+ * the honest answer to "how do I get more" is the ceiling sitting right next to it,
+ * unconfigured.
+ */
+type Capacity={
+  configured:number;
+  total:{requests:number;dailyRequests:number;spent:number;exhausted:boolean};
+  providers:Array<{id:string;label:string;hasKey:boolean;model:string;limit:string;noCard:boolean;spent:number;dailyRequests:number;left:number;exhausted:boolean}>;
+};
 
 const BRIDGE=(import.meta.env.VITE_AGENT_BRIDGE||'http://127.0.0.1:8787').replace(/\/$/,'');
 
 export function Agent(){
-  const {t,api,sessions}=useApp();
+  const {t,api,sessions,numerals}=useApp();
   const [instruction,setInstruction]=useState('');
   const [status,setStatus]=useState<Status|null>(null);
   const [bridge,setBridge]=useState<boolean|null>(null);
@@ -215,6 +228,35 @@ export function Agent(){
       </li>)}</ul>
       <p className="muted">{bridge?t('agentAfterWrite'):t('agentAfterCommit')}</p>
     </div>}
+
+    {status?.capacity&&<details className="agent-cap">
+      <summary>{t('agentCapacity',{
+        left:status.capacity.total.requests,
+        of:status.capacity.total.dailyRequests,
+        n:status.capacity.configured,
+      })}</summary>
+      <div className="agent-cap-body">
+        {status.capacity.providers.map(p=>(
+          <div className={'agent-cap-row'+(p.hasKey?'':' off')} key={p.id}>
+            <div className="agent-cap-name">
+              {p.hasKey
+                ? <b>{p.label}</b>
+                : <><b>{p.label}</b><span className="agent-cap-add">+{num(p.dailyRequests,numerals)}</span></>}
+              <small>{p.limit}</small>
+            </div>
+            {p.hasKey
+              ? <div className="agent-cap-meter">
+                  <span style={{width:Math.min(100,Math.max(3,(p.spent/p.dailyRequests)*100))+'%'}} className={p.exhausted?'gone':''}/>
+                </div>
+              : <span className="agent-cap-key">{t('agentNoKey')}</span>}
+            {p.hasKey&&<span className={'agent-cap-left'+(p.exhausted?' gone':'')}>
+              {p.exhausted?t('agentSpent'):t('agentLeft',{n:p.left})}
+            </span>}
+          </div>
+        ))}
+        <p className="muted agent-cap-note">{t('agentCapacityNote')}</p>
+      </div>
+    </details>}
 
     {status?.boundaries&&<details className="agent-boundaries">
       <summary>{t('agentBoundaries')}</summary>

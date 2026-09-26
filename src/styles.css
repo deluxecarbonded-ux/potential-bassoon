@@ -107,6 +107,26 @@
 .agent-result li.ok>svg{color:#3f7d4f}
 .agent-result li.no>svg{color:#c2703a}
 .agent-result p{font-size:11px}
+/* What is left of the free AI allowance. A meter per provider, because the useful
+   question is not "is there AI" but "which one has room and how much". Unconfigured
+   providers are shown too - their ceiling is the answer to "how do I get more". */
+.agent-cap{border:1px solid var(--surface-2);border-radius:12px;background:var(--surface);font-size:12px}
+.agent-cap summary{cursor:pointer;padding:14px 17px;color:var(--muted)}
+.agent-cap-body{padding:0 17px 16px;display:flex;flex-direction:column;gap:11px}
+.agent-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 90px auto;align-items:center;gap:13px;padding-bottom:11px;border-bottom:1px solid var(--surface-2)}
+.agent-cap-row:last-of-type{border-bottom:0;padding-bottom:0}
+.agent-cap-row.off{opacity:.55}
+.agent-cap-name{display:flex;flex-direction:column;gap:3px;min-width:0}
+.agent-cap-name b{font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.agent-cap-name small{font-size:10px;color:var(--muted);line-height:1.45}
+.agent-cap-add{font-size:10px;padding:2px 6px;border-radius:5px;background:var(--bg);color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.agent-cap-meter{height:5px;border-radius:3px;background:var(--bg);overflow:hidden}
+.agent-cap-meter span{display:block;height:100%;background:var(--fg);border-radius:3px;transition:width .3s}
+.agent-cap-meter span.gone{background:#c2703a}
+.agent-cap-left{font-size:11px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.agent-cap-left.gone{color:#c2703a}
+.agent-cap-key{font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}
+.agent-cap-note{font-size:11px;line-height:1.6;margin-top:4px}
 .agent-boundaries{border:1px solid var(--surface-2);border-radius:12px;background:var(--surface);font-size:12px}
 .agent-boundaries summary{cursor:pointer;padding:14px 17px;font-size:12px;color:var(--muted)}
 .agent-boundaries-body{padding:0 17px 15px;display:flex;flex-direction:column;gap:8px}

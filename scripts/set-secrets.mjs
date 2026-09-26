@@ -37,6 +37,32 @@ const SECRETS = [
   // caller states what they should be.
   { name: 'ALLOWED_ORIGINS', value: process.env.ALLOWED_ORIGINS, desc: 'CORS origins allowed to call the edge functions.' },
   { name: 'APP_URL', value: process.env.APP_URL, desc: 'Sent to OpenRouter as HTTP-Referer for attribution.' },
+
+  // The other free AI providers, all optional.
+  //
+  // The brief was "unlimited free AI with no quota and no rate limits". No provider offers
+  // that, and the honest answer is that these exist to stop one provider's ceiling from
+  // being the app's ceiling. Each is used only when its key is present, and the router
+  // spends the one with the most headroom left first, so adding keys raises the daily
+  // total rather than redistributing the same fifty requests. The per-provider limits,
+  // as published, are:
+  //
+  //   Google AI Studio  10-15 rpm, 250k+ tpm, 250-1500 a day, and the allowance is per
+  //                     model, so a key can be listed for a model allocated nothing.
+  //   Cerebras          30 rpm, 60k tpm, 1M tokens/day - but it requires a verified
+  //                     payment method and the free allowance is 30-day credits, so it is
+  //                     never assumed and never the default.
+  //   Groq              30 rpm, 6k-30k tpm, 1000-14400 a day by model. The 6k tpm is the
+  //                     real constraint for the build agent, whose plans run to 20k
+  //                     tokens; the router skips it for those rather than discovering it.
+  //   Mistral           about 1 request/second and a monthly token allowance.
+  //
+  // None of these needs a payment method except Cerebras, and none is required: with only
+  // OpenRouter configured the app works exactly as before, just with a smaller ceiling.
+  { name: 'GOOGLE_AI_API_KEY', value: process.env.GOOGLE_AI_API_KEY, desc: 'Google AI Studio key. Adds up to ~1500 free requests/day.' },
+  { name: 'GROQ_API_KEY', value: process.env.GROQ_API_KEY, desc: 'Groq key. Adds up to ~1000 free requests/day.' },
+  { name: 'CEREBRAS_API_KEY', value: process.env.CEREBRAS_API_KEY, desc: 'Cerebras key. Needs a verified card; 30-day credits.' },
+  { name: 'MISTRAL_API_KEY', value: process.env.MISTRAL_API_KEY, desc: 'Mistral key. Adds a monthly token allowance.' },
 ].filter((s) => s.value);
 
 const missing = ['OPENROUTER_API_KEY'].filter((k) => !SECRETS.some((s) => s.name === k));

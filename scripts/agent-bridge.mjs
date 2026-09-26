@@ -62,13 +62,19 @@ function walk(dir, out = [], depth = 0) {
 
 const send = (res, status, data) => {
   const body = JSON.stringify(data);
+  // Any loopback origin is echoed back, so the dev server works whether it is reached
+  // as localhost or as 127.0.0.1 - a browser treats those as different origins, and a
+  // hard-coded one of them fails mysteriously on the other. Nothing off this machine is
+  // reflected, and the listener is bound to 127.0.0.1 anyway, so a random web page still
+  // cannot reach this.
+  const origin = res.req?.headers?.origin || '';
+  const allow = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin) ? origin : 'http://localhost:5173';
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    // Only ever called by the app on this machine. Locked to the two dev origins rather
-    // than *, so a random page cannot drive the bridge.
-    'Access-Control-Allow-Origin': 'http://localhost:5173',
+    'Access-Control-Allow-Origin': allow,
     'Access-Control-Allow-Headers': 'content-type',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Vary': 'Origin',
   });
   res.end(body);
 };
