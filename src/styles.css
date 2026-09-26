@@ -32,3 +32,28 @@
 @media(max-width:360px){.main-content{padding:0 15px}.topbar{padding:0 15px}.topbar-actions{gap:10px}.hero{padding:25px 22px;min-height:475px}.hero h1{font-size:40px}.hero-buttons{gap:14px}.hero-buttons .button{font-size:9px}.hero-buttons .text-button{font-size:9px}.hero p{max-width:225px}.hero-visual{width:67%}.hero .eyebrow{font-size:5px}.section-heading h2{font-size:19px}.level-card h3{font-size:10px}.level-card>span{font-size:7px}.shop-toolbar .segmented a{font-size:9px}.settings-panel{padding:6px 16px}.arena-config{padding:19px}.arena-mode-options strong{font-size:10px}}
 
 .code-entry{width:100%;max-width:440px}.code-input-wrap{max-width:none}.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin:0 0 18px}.keypad button{background:var(--surface);border-radius:12px;min-height:52px;font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;font-size:20px;font-weight:650}.keypad button:hover:not(:disabled){background:var(--surface-2);transform:none}.keypad button:active:not(:disabled){transform:translateY(1px)}.room-puzzle .keypad button,.room-puzzle .digit-display>span{background:var(--bg)}.misses{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 12px}.misses span{font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;letter-spacing:2px;font-size:12px;padding:6px 8px;border-radius:7px;background:var(--surface);opacity:.55}.player-score{display:inline-flex;align-items:center;gap:6px}.room-puzzle .category-tag{margin-top:22px;width:fit-content}.answer-panel .code-entry,.room-puzzle .code-entry{max-width:440px}@media(max-width:700px){.arena-pill{display:none}}[dir=rtl] .text-link>svg:first-child{transform:scaleX(-1)}
+
+/* Chinese, Japanese and Korean write numerals in their own characters, and those
+   characters are full-width. The display type is tracked tight for Latin - a fifth
+   of an em negative, tuned against the thin strokes of Manrope - and at that setting
+   two adjacent CJK glyphs touch and then overlap. Reset it for the three languages,
+   the same way the direction rules above reset it for Arabic and Urdu. The tracking
+   that is already positive, on the index and mode numbers, is left alone. */
+[lang=ja] :is(h1,h2,h3,.puzzle-card h1,.puzzle-lines>div,.settings-panel h2,.progress-summary>span),[lang=ko] :is(h1,h2,h3,.puzzle-card h1,.puzzle-lines>div,.settings-panel h2,.progress-summary>span),[lang=zh] :is(h1,h2,h3,.puzzle-card h1,.puzzle-lines>div,.settings-panel h2,.progress-summary>span){letter-spacing:0}
+/* The how-to placeholder sets four glyphs ten pixels apart, which reads as air around
+   Latin digits and as a canyon between CJK glyphs. */
+[lang=ja] .how-art>span,[lang=ko] .how-art>span,[lang=zh] .how-art>span{letter-spacing:.12em;font-size:28px}
+/* The step number is a narrow column beside a paragraph, and two full-width glyphs are
+   twice the width of two Latin digits, so it has to hold its own line. */
+.step-number{white-space:nowrap;flex-shrink:0}
+/* The native Korean register counts in words, and most of them are two syllables:
+   다섯 is five and 일곱 is seven. A key is then twice as wide as a digit, so the
+   boxes give it room rather than letting it spill over the edge. */
+[data-numerals=native] .digit-display>span{font-size:25px}
+[data-numerals=native] .won-code>span{font-size:23px}
+[data-numerals=native] .keypad button{font-size:15px}
+[data-numerals=native] .how-art>span{font-size:22px}
+/* The register setting carries two long labels where the language select has one
+   short one, so it is allowed to wrap and to hug the end of the row. */
+.settings-row>.numeral-registers{flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:700px){.settings-row>.numeral-registers{padding:4px}.settings-row>.numeral-registers button{padding:9px 11px;font-size:10px}}
