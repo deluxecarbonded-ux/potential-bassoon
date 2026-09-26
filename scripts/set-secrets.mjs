@@ -8,10 +8,16 @@ const SECRETS = [
   { name: 'OPENROUTER_API_KEY', value: process.env.OPENROUTER_API_KEY, desc: 'OpenRouter API key for the ai-hint edge function.' },
   {
     name: 'OPENROUTER_FREE_MODELS',
-    // The function keeps only `openrouter/free` or `:free` ids, max 5. Verified live:
-    // `openrouter/free` routes to a healthy provider per request; the named free
-    // models were 429/403 at the time of writing and only act as backstops.
-    value: 'openrouter/free,qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free,z-ai/glm-5.2:free',
+    // The function keeps only `openrouter/free` or `:free` ids, max 5. Re-checked
+    // against the live catalogue on 2026-09-26: `openrouter/free` routes to a healthy
+    // provider per request, and the named models below are all present. The ids this
+    // list used to name - meta-llama/llama-3.3-70b-instruct:free and qwen/qwen3-4b:free
+    // - are gone, and so is z-ai/glm-5.2:free, which had been sitting here as a dead
+    // entry that cost one wasted attempt per call. Free-tier ids churn, so re-verify
+    // with `curl -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    // https://openrouter.ai/api/v1/models | jq -r '.data[].id' | grep ':free$'` before
+    // trusting this list; a missing id is not fatal, it is just a dead attempt.
+    value: 'openrouter/free,qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free',
     desc: 'Comma-separated free-only model route list for ai-hint.',
   },
   { name: 'ALLOWED_ORIGINS', value: 'http://localhost:5173,http://127.0.0.1:5173', desc: 'CORS origins allowed to call the edge functions.' },
