@@ -1,6 +1,6 @@
 // Pre-push secret scan. Fails loudly if any known credential or credential-shaped
 // string is present in a file git would actually track.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -61,7 +61,11 @@ function jwtRoles(text) {
 // walk() cannot tell the two apart because it never consults .gitignore.
 function trackable() {
   const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 << 20 });
-  return out.split('\0').filter(Boolean).filter((f) => !IGNORED_DIRS.has(f.split(/[\\/]/)[0]) && ALLOWED_EXT.has(extname(f)));
+  return out.split('\0').filter(Boolean)
+    // git lists a tracked file that has been deleted from the working tree but not yet
+    // staged, so confirm the file is actually there before trying to read it.
+    .filter((f) => existsSync(f))
+    .filter((f) => !IGNORED_DIRS.has(f.split(/[\\/]/)[0]) && ALLOWED_EXT.has(extname(f)));
 }
 
 const files = trackable();

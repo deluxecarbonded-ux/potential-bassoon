@@ -3,6 +3,24 @@ import {createClient,type SupabaseClient,type Session} from '@supabase/supabase-
 import {translate,isRTL} from './i18n';
 export type Mode='solo'|'arena';
 export type Progress=Record<string,{attempts:number;seconds:number;at:string}>;
+/**
+ * Folds the mode into the address so one typed email becomes two independent accounts.
+ *
+ * Single player and multiplayer are separate registrations, not one identity with two
+ * profiles, so the two must be distinct rows in auth.users - separate passwords,
+ * separate progress, separate everything. Supabase keys on the whole address, so the
+ * mode is folded into the local part: what the player types is unchanged in both
+ * routes, and mail to either still reaches the same inbox.
+ *
+ * Anything without a usable local part is passed through untouched, so a malformed
+ * address fails in Supabase with its own message rather than being mangled here.
+ */
+export function accountEmail(mode:Mode,email:string):string{
+  const raw=(email||'').trim();
+  const at=raw.lastIndexOf('@');
+  if(at<1||at===raw.length-1||raw.slice(at+1).includes('@'))return raw;
+  return raw.slice(0,at)+'+'+mode+raw.slice(at);
+}
 type LocalState={locale:string;theme:'light'|'dark';sound:boolean;motion:boolean;coins:number;inventory:Record<string,number>;progress:Progress;names:Record<Mode,string>;numerals:Record<string,string>;config:{url:string;key:string}};
 const initial:LocalState={locale:'en',theme:typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light',sound:false,motion:false,coins:0,inventory:{hint:2,digit:1},progress:{},names:{solo:'',arena:''},numerals:{},config:{url:'',key:''}};
 function load(){try{const saved=JSON.parse(localStorage.getItem('exotic-v1')||'{}');return {...initial,...saved,config:{url:saved.config?.url||import.meta.env.VITE_SUPABASE_URL||'',key:saved.config?.key||import.meta.env.VITE_SUPABASE_ANON_KEY||''}};}catch{return {...initial,config:{url:import.meta.env.VITE_SUPABASE_URL||'',key:import.meta.env.VITE_SUPABASE_ANON_KEY||''}};}}
