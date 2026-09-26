@@ -10,26 +10,15 @@
 // visits: every run starts from the instruction you type now, and nothing happens that
 // you did not ask for and then confirm.
 import React,{useEffect,useRef,useState} from 'react';
-import {useApp} from './state';
+import {useApp,toastKey} from './state';
 import {num} from './i18n';
 import {summarise} from './diff';
+import {plan as planLocally} from './ai/planner';
+import type {Plan} from './ai/planner';
 import {Check,Plus,Trash2,Pencil,ChevronDown,Loader2,ShieldCheck,TriangleAlert,ArrowRight,RefreshCw,FileCode2} from 'lucide-react';
 
 type Op={op:'create'|'update'|'delete';path:string;content?:string;note?:string};
-type Plan={summary:string;operations:Op[];dropped:Record<number,string>;model?:string;via?:string;consideredFiles?:string[];preview:{create:number;update:number;delete:number}};
-type Status={canWrite:boolean;route:string;writeNote:string;capacity?:Capacity;boundaries:{writableRoots:string[];neverWritten:string[];blockedSegments:string[];secretsRefused:string[]}};
-
-/**
- * What is left of the free AI allowance, per provider. Not decoration: the honest answer
- * to "why did the AI say it was resting" is a number per provider that goes down, and
- * the honest answer to "how do I get more" is the ceiling sitting right next to it,
- * unconfigured.
- */
-type Capacity={
-  configured:number;
-  total:{requests:number;dailyRequests:number;spent:number;exhausted:boolean};
-  providers:Array<{id:string;label:string;hasKey:boolean;model:string;limit:string;noCard:boolean;spent:number;dailyRequests:number;left:number;exhausted:boolean}>;
-};
+type Status={canWrite:boolean;route:string;writeNote:string;boundaries:{writableRoots:string[];neverWritten:string[];blockedSegments:string[];secretsRefused:string[]}};
 
 const BRIDGE=(import.meta.env.VITE_AGENT_BRIDGE||'http://127.0.0.1:8787').replace(/\/$/,'');
 
@@ -66,13 +55,18 @@ export function Agent(){
     setBusy('plan');setPlan(null);setResult(null);
     abort.current?.abort();abort.current=new AbortController();
     try{
-      // Read the project's real files through the bridge, so the model is reasoning
-      // about the code that is actually here rather than about a description of it.
+      // The project's real files, because every recipe edits the code that is actually
+      // here rather than a description of it, and re-checks its own anchors against these
+      // exact contents before offering anything.
+      //
+      // Two routes to them. The bridge is this machine's working tree, which is newer than
+      // any commit and needs no credential. With no bridge, the function reads the same
+      // files from GitHub - still a request, but a file fetch, not a model call.
       const files:Array<{path:string;content:string}>=[];
       if(bridge){
         const tree=await (await fetch(`${BRIDGE}/tree`)).json() as {files:Array<{path:string;size:number}>};
-        // The same shortlist the function would make, so the request stays small enough
-        // for a free model. Keyword matches first, then the files everything touches.
+        // Keyword matches first, then the files everything touches. The same scoring the
+        // function uses, so both routes hand the planner the same shortlist.
         const words=instruction.toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>2);
         const score=(p:string)=>{const l=p.toLowerCase();let s=0;for(const w of words)if(l.includes(w))s+=3;if(/^src\/(app|state|main)\./.test(l))s+=4;if(l==='src/i18n.ts')s+=3;if(l==='src/styles.css')s+=2;return s;};
         const shortlist=tree.files.map(f=>({...f,s:score(f.path)})).filter(f=>f.s>0&&f.size<=262144)
@@ -83,30 +77,32 @@ export function Agent(){
           const d=await r.json() as {content:string};
           files.push({path:f.path,content:d.content});
         }
+      }else{
+        const res=await api('solo','agent',{op:'files',instruction:instruction.trim(),files},abort.current.signal);
+        const got=(res as {files?:Array<{path:string;content:string}>})?.files;
+        if(Array.isArray(got))files.push(...got);
       }
-      const res=await api('solo','agent',{op:'plan',instruction:instruction.trim(),files},abort.current.signal);
-      const next=res as Plan;
+
+      if(!files.length){setProblem(t('agentNoFiles'));return;}
+
+      // The planning itself: in this tab, in microseconds, with nothing fetched.
+      const next=planLocally(instruction.trim(),files);
+      if(next.unknown||!next.operations.length){setProblem(t('agentUnknown'));return;}
       setPlan(next);
       // Everything starts ticked except deletes. A delete is a thing you asked for on
       // purpose, so it takes a deliberate act to include one.
       setPicked(Object.fromEntries(next.operations.map((o,i)=>[i,o.op!=='delete'])));
       // Remember the current content of anything being changed, so the diff has a
-      // before to compare against.
+      // before to compare against. The planner already holds the "after" in each
+      // operation, so this is only ever about showing the difference.
       const prior:Record<string,string>={};
       for(const o of next.operations){
         if(o.op==='create'){prior[o.path]='';continue;}
-        if(bridge){
-          const r=await fetch(`${BRIDGE}/file?path=${encodeURIComponent(o.path)}`,{signal:abort.current.signal});
-          prior[o.path]=r.ok?((await r.json() as {content:string}).content):'';
-        }
+        prior[o.path]=files.find(f=>f.path===o.path)?.content||'';
       }
       setBefore(prior);
     }catch(e){
-      // aiUnavailable is what the function returns when the free models are spent, which
-      // is a different thing from a failure and needs a different sentence: the work is
-      // fine, the provider's daily allowance is gone.
-      const code=e instanceof Error?e.message:'';
-      setProblem(/aiUnavailable|quota|free route|429/i.test(code)?t('agentBusy'):t('error'));
+      setProblem(t(toastKey(e)));
     }finally{setBusy('');}
   };
 
@@ -128,7 +124,7 @@ export function Agent(){
         setResult(await api('solo','agent',{op:'apply',operations:ops,confirm:true,destroyConfirmed:deletes.length>0}) as never);
       }
       setPlan(null);setPicked({});setInstruction('');
-    }catch{setProblem(t('error'));}
+    }catch(e){setProblem(t(toastKey(e)));}
     finally{setBusy('');}
   };
 
@@ -177,8 +173,8 @@ export function Agent(){
         {plan.consideredFiles?.length?<span className="subtle-tag">{t('agentRead',{n:plan.consideredFiles.length})}</span>:null}
       </div>
 
-      {Object.keys(plan.dropped||{}).length>0&&<div className="agent-dropped">
-        <ShieldCheck size={16}/><span>{t('agentDropped',{n:Object.keys(plan.dropped).length})}</span>
+      {plan.note&&<div className="agent-dropped">
+        <ShieldCheck size={16}/><span>{plan.note}</span>
       </div>}
 
       <div className="agent-ops">
@@ -229,32 +225,10 @@ export function Agent(){
       <p className="muted">{bridge?t('agentAfterWrite'):t('agentAfterCommit')}</p>
     </div>}
 
-    {status?.capacity&&<details className="agent-cap">
-      <summary>{t('agentCapacity',{
-        left:status.capacity.total.requests,
-        of:status.capacity.total.dailyRequests,
-        n:status.capacity.configured,
-      })}</summary>
+    {status&&<details className="agent-cap">
+      <summary>{t('agentLocal')}</summary>
       <div className="agent-cap-body">
-        {status.capacity.providers.map(p=>(
-          <div className={'agent-cap-row'+(p.hasKey?'':' off')} key={p.id}>
-            <div className="agent-cap-name">
-              {p.hasKey
-                ? <b>{p.label}</b>
-                : <><b>{p.label}</b><span className="agent-cap-add">+{num(p.dailyRequests,numerals)}</span></>}
-              <small>{p.limit}</small>
-            </div>
-            {p.hasKey
-              ? <div className="agent-cap-meter">
-                  <span style={{width:Math.min(100,Math.max(3,(p.spent/p.dailyRequests)*100))+'%'}} className={p.exhausted?'gone':''}/>
-                </div>
-              : <span className="agent-cap-key">{t('agentNoKey')}</span>}
-            {p.hasKey&&<span className={'agent-cap-left'+(p.exhausted?' gone':'')}>
-              {p.exhausted?t('agentSpent'):t('agentLeft',{n:p.left})}
-            </span>}
-          </div>
-        ))}
-        <p className="muted agent-cap-note">{t('agentCapacityNote')}</p>
+        <p className="muted agent-cap-note">{t('agentLocalNote')}</p>
       </div>
     </details>}
 

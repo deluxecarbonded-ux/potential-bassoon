@@ -2,13 +2,13 @@
 // Calls each function with no bearer token. verify_jwt=true means a valid user JWT
 // is required, so the expected result is the function's own 401 {"error":"signIn"}.
 // That still proves the function is live, the Deno runtime starts, and every import
-// in _shared/http.ts resolves. It does NOT exercise the OpenRouter call path.
+// in _shared/http.ts resolves. It does NOT exercise the GitHub write path, which needs a
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.SB_URL;
 const key = process.env.SB_ANON_KEY;
 
-for (const fn of ['solo-action', 'room-action', 'ai-hint']) {
+for (const fn of ['solo-action', 'room-action', 'agent']) {
   const endpoint = `${url}/functions/v1/${fn}`;
   for (const [label, init] of [
     ['no auth header', { headers: { apikey: key, 'content-type': 'application/json' } }],
@@ -30,7 +30,7 @@ for (const fn of ['solo-action', 'room-action', 'ai-hint']) {
 }
 
 // Confirm a bad token is rejected by the gateway itself, not just by our handler.
-const r = await fetch(`${url}/functions/v1/ai-hint`, {
+const r = await fetch(`${url}/functions/v1/agent`, {
   method: 'POST',
   headers: { apikey: key, authorization: 'Bearer not-a-real-jwt', 'content-type': 'application/json' },
   body: '{}',

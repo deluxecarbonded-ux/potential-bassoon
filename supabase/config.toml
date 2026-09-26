@@ -25,5 +25,8 @@ verify_jwt = true
 [functions.room-action]
 verify_jwt = true
 
-[functions.ai-hint]
-verify_jwt = true
+# There is no ai-hint function and no agent-planning model any more. Hints are written on
+# the reader's own device by src/ai, from committed weights, so there is nothing here to
+# authenticate against and no provider key anywhere in the project. The agent function
+# remains, but only as the writer: it commits an approved diff to GitHub, or the local
+# bridge does. Neither path involves a model.

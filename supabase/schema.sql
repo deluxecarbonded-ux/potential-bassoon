@@ -72,7 +72,7 @@
 --  the wallet, inventory and transaction tables, solo progress, the three arena
 --  tables, and the catalog, the live round questions and the player's own ledger.
 --
---  The three private tables are deliberately excluded, and this is the one place
+--  The two private tables are deliberately excluded, and this is the one place
 --  where "realtime on every table" would break the game rather than complete it:
 --
 --    private.round_answers    holds the four-digit answer to every round of every
@@ -80,10 +80,6 @@
 --                             game to every connected client.
 --    private.solo_challenges  holds the answer to every solo puzzle, live. Same
 --                             problem, and worse because these are open right now.
---    private.ai_usage         per-account counters for the daily AI hint cap. Not
---                             a secret worth stealing, but it is another account's
---                             usage of a shared free tier, and there is no reason
---                             to publish it.
 --
 --  If those were added, every player could read every answer and the puzzles would
 --  stop being puzzles. Realtime is enabled everywhere it is safe and withheld
@@ -430,65 +426,11 @@ comment on table private.round_answers is
   'The answers to every round of every match. Never granted, never in a policy, '
   'never published to realtime. Read only by room_action when grading an answer.';
 
--- ----------------------------------------------------------------------------
---  private.ai_usage - the daily AI hint cap, solo only
---
---  One row per account per day, incremented by ai_hint_context and capped at ten. It
---  lives in private because the count is nobody else's business, and it is not
---  published to realtime for the same reason.
--- ----------------------------------------------------------------------------
-
-create table private.ai_usage (
-  user_id    uuid    not null references auth.users(id) on delete cascade,
-  day        date    not null default current_date,
-  requests   integer not null default 0,
-  primary key (user_id, day)
-);
-
-comment on table private.ai_usage is
-  'Per-account daily AI hint counter, capped at ten in ai_hint_context. Private and '
-  'not published to realtime: it is one account''s usage of a shared free tier.';
 
 
--- ----------------------------------------------------------------------------
---  private.ai_provider_usage - how much of each free provider's day is spent
---
---  Every free AI provider caps something, and the smallest cap this project can use is
---  OpenRouter's 50 requests a day. The router spreads work across every free tier
---  available so that one running out does not stop the app, and this table is how it
---  knows where the headroom is.
---
---  It is a table rather than a counter in the function because an edge function isolate
---  is short-lived and there are many of them: in memory, the tally is forgotten the
---  moment one recycles and every new isolate rediscovers the same exhausted provider by
---  being refused by it. Persisted, a provider that said "no more today" is still known
---  to be finished after a cold start, a deploy, or an hour.
---
---  Separate from private.ai_usage on purpose. That asks "may this account ask for a
---  hint", which is a product rule - ten a day keeps a shared free tier fair. This asks
---  "which provider can still serve anyone", which is an operational fact.
---
---  tokens_in is kept because the binding constraint for the build agent is tokens per
---  minute, not requests per day: a provider with thousands of requests left cannot serve
---  a twenty-thousand-token plan if its per-minute ceiling is six thousand.
--- ----------------------------------------------------------------------------
 
-create table private.ai_provider_usage (
-  provider      text        not null,
-  day           date        not null default current_date,
-  requests      integer     not null default 0,
-  tokens_in     integer     not null default 0,
-  tokens_out    integer     not null default 0,
-  exhausted     boolean     not null default false,
-  exhausted_at  timestamptz,
-  updated_at    timestamptz not null default now(),
-  primary key (provider, day)
-);
 
-comment on table private.ai_provider_usage is
-  'Daily spend per free AI provider, so the router sends work where there is still '
-  'headroom instead of rediscovering an exhausted provider by being refused by it. '
-  'Not published to realtime: it is operational, not a player''s business.';
+
 
 -- ============================================================================
 --  SECTION 3. Functions
@@ -1012,38 +954,6 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
---  public.ai_hint_context - hand a solo puzzle to the hint model
---
---  Returns the prompt, the lines and the official hint, and deliberately not the
---  answer: the model is asked to explain a method, and it is never told the code, so
---  it cannot leak it even if it tries. The increment and the cap happen in the same
---  statement that reads the row, so the eleventh request in a day is refused before it
---  is served.
--- ----------------------------------------------------------------------------
-
-create or replace function public.ai_hint_context(p_user uuid, p_id uuid)
-returns jsonb
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare c private.solo_challenges; n integer;
-begin
-  select * into c from private.solo_challenges
-  where id = p_id and user_id = p_user and not completed;
-  if not found then raise exception 'Invalid challenge'; end if;
-
-  insert into private.ai_usage(user_id, day, requests)
-  values(p_user, current_date, 1)
-  on conflict(user_id, day) do update set requests = private.ai_usage.requests + 1
-  returning requests into n;
-  if n > 10 then raise exception 'Daily AI limit'; end if;
-
-  return jsonb_build_object('prompt', c.prompt, 'lines', c.lines, 'hint', c.hint, 'locale', c.locale);
-end;
-$$;
-
--- ----------------------------------------------------------------------------
 --  private.advance_room - move a match on, or finish it
 --
 --  Called from room_action rather than from a timer, because a round is resolved the
@@ -1141,7 +1051,6 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
---  public.record_ai_provider_use and public.ai_provider_today - the AI quota ledger
 --
 --  These two are in public and everything they touch is in private, which is deliberate
 --  and worth understanding before anyone tidies it up.
@@ -1152,7 +1061,6 @@ $$;
 --  cache", naming public, because public is all it looked in. So the functions live where
 --  PostgREST can see them and the row they read and write does not move.
 --
---  They are SECURITY DEFINER because their bodies touch private.ai_provider_usage, which
 --  the calling role may not use. That is the same reason ensure_profile and
 --  is_room_member are security definer, and it is safe for the same reasons: the
 --  search_path is pinned to the empty string so the body can only reach what it names in
@@ -1166,46 +1074,7 @@ $$;
 --  usage: once a provider says no more today, the rest of today goes elsewhere.
 -- ----------------------------------------------------------------------------
 
-create or replace function public.record_ai_provider_use(
-  p_provider text,
-  p_requests integer default 1,
-  p_tokens_in integer default 0,
-  p_tokens_out integer default 0,
-  p_exhausted boolean default false
-) returns void
-language sql
-security definer
-set search_path = ''
-as $$
-  insert into private.ai_provider_usage(provider, day, requests, tokens_in, tokens_out, exhausted, exhausted_at, updated_at)
-  values (
-    p_provider, current_date, p_requests, p_tokens_in, p_tokens_out,
-    p_exhausted, case when p_exhausted then clock_timestamp() else null end, clock_timestamp()
-  )
-  on conflict (provider, day) do update
-    set requests = private.ai_provider_usage.requests + excluded.requests,
-        tokens_in = private.ai_provider_usage.tokens_in + excluded.tokens_in,
-        tokens_out = private.ai_provider_usage.tokens_out + excluded.tokens_out,
-        exhausted = private.ai_provider_usage.exhausted or excluded.exhausted,
-        exhausted_at = case
-          when excluded.exhausted and private.ai_provider_usage.exhausted_at is null
-            then clock_timestamp()
-          else private.ai_provider_usage.exhausted_at
-        end,
-        updated_at = clock_timestamp();
-$$;
 
-create or replace function public.ai_provider_today()
-returns table (provider text, requests integer, tokens_in integer, tokens_out integer, exhausted boolean)
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select u.provider, u.requests, u.tokens_in, u.tokens_out, u.exhausted
-  from private.ai_provider_usage u
-  where u.day = current_date;
-$$;
 
 -- ----------------------------------------------------------------------------
 --  public.rls_auto_enable - a new table cannot be shipped unprotected
@@ -1395,8 +1264,6 @@ create policy current_question on public.round_questions
 
 alter table private.solo_challenges   enable row level security;
 alter table private.round_answers     enable row level security;
-alter table private.ai_usage          enable row level security;
-alter table private.ai_provider_usage enable row level security;
 
 comment on table private.solo_challenges is
   'RLS enabled with no policy, which means deny. service_role bypasses RLS, so the '
@@ -1471,18 +1338,6 @@ grant execute on function public.solo_action(uuid, text, jsonb) to service_role;
 revoke all on function public.room_action(uuid, text, jsonb) from public, anon, authenticated;
 grant execute on function public.room_action(uuid, text, jsonb) to service_role;
 
-revoke all on function public.ai_hint_context(uuid, uuid) from public, anon, authenticated;
-grant execute on function public.ai_hint_context(uuid, uuid) to service_role;
-
--- The AI quota ledger. Readable only by the edge functions, which is what makes the
--- router's memory of a spent provider trustworthy: a client cannot inflate a counter and
--- lock the AI features out for everyone.
-revoke all on function public.record_ai_provider_use(text, integer, integer, integer, boolean) from public, anon, authenticated;
-grant execute on function public.record_ai_provider_use(text, integer, integer, integer, boolean) to service_role;
-
-revoke all on function public.ai_provider_today() from public, anon, authenticated;
-grant execute on function public.ai_provider_today() to service_role;
-
 -- Owner only. See the note above the function.
 revoke all on function public.rls_auto_enable() from public, anon, authenticated, service_role;
 
@@ -1531,8 +1386,6 @@ alter table public.catalog         replica identity full;
 -- Explicitly not published:
 --   private.round_answers    - every match answer
 --   private.solo_challenges  - every live solo answer
---   private.ai_usage         - one account's usage of a shared free tier
---   private.ai_provider_usage - how much of the shared free AI allowance is left, which
 --                               is operational rather than anyone's business, and which
 --                               would be a map of how hard the platform is being pushed
 

@@ -1,21 +1,25 @@
 import {context,json,errorResponse} from '../_shared/http.ts';
-import {askFree,accountVia,capacity} from '../_shared/router.ts';
 import {boundaries,review,mayTouch} from '../_shared/guard.ts';
-import {PLAN_SYSTEM,extractOperations,selectFiles,renderContext} from '../_shared/plan.ts';
+import {selectFiles} from '../_shared/plan.ts';
 
-// The in-game build agent.
+// The build agent's writer.
+//
+// Planning happens in the browser now, from src/ai/planner.ts, and it happens entirely on
+// the reader's machine: there is no model behind this function and no provider key in this
+// project. What is left here is the half that genuinely cannot be local - reaching a
+// GitHub repository and committing to it - plus the guard, which is pure code and decides
+// what may be written regardless of who or what proposed it.
 //
 // Three things it will not do, and they are the reason it is safe to point at a real
 // repository:
 //
-//   It never acts on its own. There is no autonomous loop and no background work. Every
-//   call carries an instruction a person typed, and a plan is nothing until that person
-//   approves specific operations from it.
+//   It never acts on its own. There is no autonomous loop and no background work. A plan is
+//   nothing until a person approves specific operations from it.
 //   It never writes without a second, explicit confirmation, and a delete is confirmed
 //   separately from a write, so approving a feature cannot quietly take a file with it.
 //   It never writes a credential, a lockfile, a dependency, or anything outside the
-//   source roots. The guard module decides that, not the model, and the model's own
-//   output is re-checked before it is ever shown for approval.
+//   source roots. The guard decides that, and every operation is re-checked here before it
+//   is ever shown for approval, whatever produced it.
 //
 // How the files get here, and why the two halves live in different places:
 //
@@ -37,10 +41,10 @@ Deno.serve(async(req:Request)=>{
  try{
   // The agent carries whole file contents, so it needs a far larger body than a game
   // action does. The caller is still a signed-in player either way.
-  const {db,user,body}=await context(req,{maxBytes:1572864});
+  const {user,body}=await context(req,{maxBytes:1572864});
   const op=String(body?.op||'');
-  if(op==='status')return json(req,{...status(),user:user.id,capacity:await capacity()});
-  if(op==='plan')return json(req,await plan(db,body));
+  if(op==='status')return json(req,{...status(),user:user.id});
+  if(op==='files')return json(req,await files(body));
   if(op==='apply')return json(req,await apply(req,body));
   throw Error('error');
  }catch(e){return errorResponse(req,e);}
@@ -131,68 +135,33 @@ function encodeBase64(text:string):string{
  return btoa(bin);
 }
 
-/* ------------------------------------------------------------------ planning */
+/* ------------------------------------------------------------------ reading the files */
 
-async function plan(db:{rpc:(fn:string,args:Record<string,unknown>)=>Promise<unknown>},body:Record<string,unknown>){
- accountVia(db);
+/**
+ * Hands the browser the project files it needs in order to plan, and nothing else.
+ *
+ * This used to be the first half of a plan op that then called a model. Planning is local
+ * now, so the only reason a request still leaves the machine is that reaching GitHub does.
+ * The selection is unchanged: the same shortlist, by the same relevance score, capped at
+ * the same twelve files - a plan is only as good as the code it could see, and this is
+ * still the part that decides what that is.
+ *
+ * Files the browser supplies win, because that is the local bridge's reading of the working
+ * tree, which is newer than any commit.
+ */
+async function files(body:Record<string,unknown>){
  const text=String(body?.instruction||'').trim();
- if(text.length<4||text.length>4000)throw Error('error');
+ if(!text||text.length>4000)throw Error('error');
 
- // The files may arrive with the request, which is how the browser hands over what the
- // local bridge read. If they do not, the tree is read from GitHub instead.
  const supplied=suppliedFiles(body);
- let contents:Array<{path:string;content:string}>;
- let via='browser';
- if(supplied.length){
-  contents=supplied;
- }else{
-  via='github';
-  const files=await treeFromGitHub();
-  if(!files.length)throw Error('noFiles');
-  const picked=selectFiles(files,text).slice(0,12);
-  contents=await readFromGitHub(picked.map((f)=>f.path));
-  if(!contents.length)throw Error('noFiles');
- }
+ if(supplied.length)return {files:supplied,via:'browser'};
 
- // The model is told what it will not be allowed to touch rather than left to guess. The
- // guard is what enforces it, but a model that knows the boundary proposes fewer
- // operations that have to be thrown away, and every one of those costs a retry.
- // requestTokens is the real size of this request, which is what lets the router skip a
- // provider whose per-minute ceiling is below it instead of spending an attempt finding
- // out. A planning request is by far the largest thing this project sends.
- const requestTokens=Math.round(renderContext(contents).length/3)+400;
- const {text:reply,model,provider}=await askFree([
-  {role:'system',content:PLAN_SYSTEM},
-  {role:'user',content:`Here are some of the project's files:\n\n${renderContext(contents)}\n\nRequested change: ${text}`},
- ],{
-  maxTokens:4000,
-  // A patch is work that should come out the same way twice, and a reasoning model
-  // narrating its own deliberation produces a reply no JSON parser wants.
-  temperature:0.2,
-  reasoning:{effort:'none'},
-  label:'agent-plan',
-  requestTokens,
-  accept:(t)=>!extractOperations(t).fatal,
- });
-
- const parsed=extractOperations(reply);
- if(parsed.fatal)throw Error('error');
-
- return {
-  summary:parsed.summary,
-  operations:parsed.operations,
-  dropped:parsed.dropped,
-  model,
-  provider,
-  via,
-  consideredFiles:contents.map((f)=>f.path),
-  // What the person is about to be asked to approve, in words, before they see it.
-  preview:{
-   create:parsed.operations.filter((o)=>o.op==='create').length,
-   update:parsed.operations.filter((o)=>o.op==='update').length,
-   delete:parsed.operations.filter((o)=>o.op==='delete').length,
-  },
- };
+ const tree=await treeFromGitHub();
+ if(!tree.length)throw Error('noFiles');
+ const picked=selectFiles(tree,text).slice(0,12);
+ const contents=await readFromGitHub(picked.map((f)=>f.path));
+ if(!contents.length)throw Error('noFiles');
+ return {files:contents,via:'github'};
 }
 
 /**

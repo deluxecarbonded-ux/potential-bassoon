@@ -11,6 +11,9 @@ const ALLOWED_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.jso
 // second copy of the secret it is looking for.
 //   $env:SCAN_SECRET_DB_PASSWORD='...'  node scripts/scan-secrets.mjs
 const SECRETS = [
+  // The project no longer calls OpenRouter, but this pattern stays: a credential shape is
+  // not less of a credential because we stopped handing one out, and a key committed from
+  // anywhere else is still a leaked key.
   ['OpenRouter API key', /sk-or-v1-[A-Za-z0-9]{20,}/],
   ['Supabase PAT', /sbp_[A-Za-z0-9]{20,}/],
   ['Supabase service_role JWT', /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/],
@@ -22,7 +25,9 @@ const SECRETS = [
 for (const [label, value] of [
   ['Postgres password (from env)', process.env.SCAN_SECRET_DB_PASSWORD],
   ['Supabase PAT (from env)', process.env.SCAN_SECRET_PAT],
-  ['OpenRouter key (from env)', process.env.SCAN_SECRET_OPENROUTER],
+  // No OpenRouter entry, because the project holds no OpenRouter key any more. The pattern
+  // above still runs: a credential shape does not stop being one because this repository
+  // stopped issuing it, and a key committed by something else is still a leaked key.
 ]) {
   if (value) SECRETS.push([label, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))]);
 }

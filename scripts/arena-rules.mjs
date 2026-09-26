@@ -60,7 +60,20 @@ async function player(tag, locale, coins = 0) {
   return { id: data.user.id, email, locale, jwt };
 }
 
+// Counts taken before the run, so cleanup can be judged against the database as it was
+// found rather than against zero. Asserting zero only holds on a project nobody has ever
+// signed in to; on a real one the game's own accounts are already there, and this check
+// would report the game's data as residue the test had failed to remove.
+const residue = `select (select count(*)::int from auth.users) u, (select count(*)::int from public.rooms) r,
+    (select count(*)::int from public.room_players) p, (select count(*)::int from public.wallets) w,
+    (select count(*)::int from public.inventory) i, (select count(*)::int from public.profiles) f`;
+
+// Declared out here because the cleanup in `finally` reads it, and a binding first
+// assigned inside the `try` is not in scope there.
+let baseline = null;
+
 try {
+  baseline = (await q(residue))[0];
   console.log('MULTI-ROUND ADVANCEMENT (first-to-crack, 3 rounds)');
   const a = await player('alice', 'en');
   const b = await player('bob', 'en');
@@ -134,10 +147,22 @@ try {
   const { json: rl } = await room(g.jwt, { action: 'create', mode: 'first', rounds: 1, category: 'math', locale: 'en' });
   await room(h.jwt, { action: 'join', code: rl.code, locale: 'en' });
   await room(g.jwt, { action: 'start', code: rl.code });
-  const firstTry = await room(g.jwt, { action: 'answer', code: rl.code, answer: '0000', round: 1 });
-  const instant = await room(g.jwt, { action: 'answer', code: rl.code, answer: '0000', round: 1 });
-  ok('the first answer is processed', firstTry.json.correct === false && !firstTry.json.error, JSON.stringify(firstTry.json));
-  ok('an immediate second answer is rate limited', !!instant.json.error, JSON.stringify(instant.json));
+  // Both answers go out together rather than one after the other. The guard is a 400ms
+  // window on the previous attempt, and two sequential round trips to a cold edge function
+  // can take longer than that between them - in which case the guard is right not to fire
+  // and this was measuring the network rather than the guard, which is how it came to fail
+  // on a slow run and pass on a fast one. In flight together they arrive inside the window
+  // the way a double click does, which is the case the guard exists for. Which of the two
+  // wins is the database's business, so the assertions count rather than name.
+  const simultaneous = await Promise.all([
+    room(g.jwt, { action: 'answer', code: rl.code, answer: '0000', round: 1 }),
+    room(g.jwt, { action: 'answer', code: rl.code, answer: '0001', round: 1 }),
+  ]);
+  const counted = simultaneous.map((r) => JSON.stringify(r.json)).join(' / ');
+  const processed = simultaneous.filter((r) => r.json.correct === false && !r.json.error);
+  const refused = simultaneous.filter((r) => !!r.json.error);
+  ok('the first answer is processed', processed.length === 1, counted);
+  ok('an immediate second answer is rate limited', refused.length === 1, counted);
   await new Promise((r) => setTimeout(r, 450));
   const afterGap = await room(g.jwt, { action: 'answer', code: rl.code, answer: '0000', round: 1 });
   ok('the guard lifts after 400ms', afterGap.json.correct === false && !afterGap.json.error, JSON.stringify(afterGap.json));
@@ -178,15 +203,23 @@ try {
   ok('a non-consumable arena item cannot be bought twice', !!twice.json.error, JSON.stringify(twice.json));
 } finally {
   console.log('\nCLEANUP');
-  await db.query("delete from public.rooms where created_at > now() - interval '30 minutes'");
+  // Scoped to the rooms these test accounts host, which is every room the run made -
+  // the four made through the API and the twenty seeded straight into the table. The
+  // previous form deleted anything created in the last thirty minutes, which on a project
+  // that has real players in it would take their unfinished matches with it.
+  await db.query('delete from public.rooms where host_id = any($1::uuid[])', [made]);
   for (const id of made) {
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) console.log(`  FAILED ${id}: ${JSON.stringify(error)}`);
   }
-  const after = (await q(`select (select count(*)::int from auth.users) u, (select count(*)::int from public.rooms) r,
-    (select count(*)::int from public.room_players) p, (select count(*)::int from public.wallets) w,
-    (select count(*)::int from public.inventory) i, (select count(*)::int from public.profiles) f`))[0];
-  ok('no test residue left behind', after.u === 0 && after.r === 0 && after.p === 0 && after.w === 0 && after.i === 0 && after.f === 0, JSON.stringify(after));
+  const after = (await q(residue))[0];
+  if (!baseline) {
+    ok('no test residue left behind', false, 'could not read a baseline to compare against');
+  } else {
+    const drift = Object.keys(after).filter((k) => after[k] !== baseline[k]);
+    ok('no test residue left behind', drift.length === 0,
+      drift.length ? `left over: ${drift.map((k) => `${k} ${baseline[k]}->${after[k]}`).join(', ')}` : `unchanged: ${JSON.stringify(after)}`);
+  }
   await db.end();
 }
 console.log(`\n${pass} passed, ${fail} failed`);

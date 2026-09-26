@@ -1,46 +1,21 @@
-// Turning whatever the free model replied with into a set of file operations.
+// Reading the project's files, and validating a plan back into operations.
 //
-// Free models are chatty. They wrap JSON in fences, prefix it with "Sure! Here's the
-// change:", append a sentence afterwards, occasionally emit a trailing comma, and
-// sometimes reason out loud before answering. This module is the layer that absorbs
-// all of that, so the rest of the agent only ever sees a clean operation list or a
-// clean refusal.
+// There is no model prompt here any more. Planning moved into the browser - see
+// src/ai/planner.ts - so what is left in this module is the part that is about the code
+// rather than about a model: choosing which files are worth showing, and turning a plan
+// into a validated operation list.
 //
-// Pure and dependency-free, so scripts/test-agent-plan.mjs can feed it the real replies
-// the router produced during development and check that none of them can talk it into
-// writing something it should not.
+// extractOperations stays, and stays strict, because a plan can now arrive from the
+// browser, from the local bridge, or from anything else that can reach the apply op, and
+// every one of those is untrusted. The tests in scripts/test-agent-plan.mjs were written
+// against the chatty output of free models and still apply: fences, preambles, renamed
+// fields, trailing commas and smuggled credentials all have to be absorbed here rather
+// than by whatever produced the text.
+//
+// Pure and dependency-free, so it is testable off-platform with no model and no network.
 
 import type { Operation } from './guard.ts';
 import { mayTouch, looksSecret } from './guard.ts';
-
-const SYSTEM = `You are the build agent for Exotic, a browser game: a four-digit code
-puzzle with a single player campaign and a two-player realtime arena. The project is
-React 19 + TypeScript + Vite, styled by hand in one stylesheet, i18n through a
-pipe-delimited table in src/i18n.ts, and Supabase for auth, Postgres, row level security
-and three Deno edge functions.
-
-You are given some of the project's files. Make the smallest change that does what was
-asked, in the style already there. Do not rewrite a file you were not asked to change.
-Do not add dependencies. Do not add a comment explaining that something was changed.
-
-Reply with one JSON object and nothing else. No prose before or after, no markdown
-fence. This exact shape:
-
-{"summary":"one sentence on what you changed","operations":[
-  {"op":"update","path":"src/App.tsx","note":"why this file","content":"the whole new file content"},
-  {"op":"create","path":"src/Thing.tsx","note":"why this file","content":"the whole new file content"},
-  {"op":"delete","path":"src/Gone.tsx","note":"why it is no longer needed"}
-]}
-
-"content" is the complete new content of the file, not a fragment and not a diff. Use
-"update" when the file already exists and "create" when it does not. Use "delete" only
-when the instruction really asks for a file to go. If the request needs no change, reply
-{"summary":"...","operations":[]}.
-
-Never write a credential, a token, a key or an environment file. Never write outside
-src/, supabase/, scripts/, public/ or the named root files.`;
-
-export { SYSTEM as PLAN_SYSTEM };
 
 /** Pulls the first balanced JSON object out of a chatty reply. */
 function firstJsonObject(text: string): string | null {

@@ -46,18 +46,43 @@ export function accountAddress(mode:Mode,username:string):string{return normaliz
  */
 const EMAIL_RE=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function validEmail(email:string):boolean{return EMAIL_RE.test((email||'').trim());}
-type LocalState={locale:string;theme:'light'|'dark';sound:boolean;motion:boolean;localAi:boolean;coins:number;inventory:Record<string,number>;progress:Progress;names:Record<Mode,string>;usernames:Record<Mode,string>;emails:Record<Mode,string>;numerals:Record<string,string>;config:{url:string;key:string}};
-// localAi is off by default and that is a cost decision rather than a technical one: the
-// weights are about a gigabyte, and nobody should spend that on a feature they never
-// switched on. Turned on, it is remembered, so the download is paid once.
-const initial:LocalState={locale:'en',theme:typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light',sound:false,motion:false,localAi:false,coins:0,inventory:{hint:2,digit:1},progress:{},names:{solo:'',arena:''},usernames:{solo:'',arena:''},emails:{solo:'',arena:''},numerals:{},config:{url:'',key:''}};
+type LocalState={locale:string;theme:'light'|'dark';sound:boolean;motion:boolean;coins:number;inventory:Record<string,number>;progress:Progress;names:Record<Mode,string>;usernames:Record<Mode,string>;emails:Record<Mode,string>;numerals:Record<string,string>;config:{url:string;key:string}};
+// There is no localAi flag any more, and nothing in the saved shape refers to one. The
+// switch used to decide whether a 1.1GB model was downloaded and whether a hint would be
+// written by it; the model is now a few kilobytes of committed weights that are always
+// present, so there is nothing left to remember and nothing to migrate. A stale true in
+// somebody's saved state is simply ignored by the spread below.
+const initial:LocalState={locale:'en',theme:typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light',sound:false,motion:false,coins:0,inventory:{hint:2,digit:1},progress:{},names:{solo:'',arena:''},usernames:{solo:'',arena:''},emails:{solo:'',arena:''},numerals:{},config:{url:'',key:''}};
 function load(){try{const saved=JSON.parse(localStorage.getItem('exotic-v1')||'{}');return {...initial,...saved,config:{url:saved.config?.url||import.meta.env.VITE_SUPABASE_URL||'',key:saved.config?.key||import.meta.env.VITE_SUPABASE_ANON_KEY||''}};}catch{return {...initial,config:{url:import.meta.env.VITE_SUPABASE_URL||'',key:import.meta.env.VITE_SUPABASE_ANON_KEY||''}};}}
 export const products=[{id:'hint',mode:'solo',price:30,title:'hintPack',description:'hintDesc'},{id:'digit',mode:'solo',price:70,title:'digitPack',description:'digitDesc'},{id:'moon',mode:'arena',price:100,title:'nightPack',description:'nightDesc'},{id:'crown',mode:'arena',price:250,title:'crownPack',description:'crownDesc'}] as const;
 type Cloud={coins:number;inventory:Record<string,number>;progress:Progress;name:string;wins:number;emblem:string};
 const emptyCloud:Cloud={coins:0,inventory:{},progress:{},name:'',wins:0,emblem:''};
 type ContextType={state:LocalState;setState:React.Dispatch<React.SetStateAction<LocalState>>;t:(key:string,vars?:Record<string,string|number>)=>string;numerals:string;toast:(key:string)=>void;clients:Record<Mode,SupabaseClient|null>;sessions:Record<Mode,Session|null>;cloud:Record<Mode,Cloud>;refresh:(mode:Mode)=>Promise<void>;api:(mode:Mode,fn:string,data:unknown,signal?:AbortSignal)=>Promise<any>;coins:(mode:Mode)=>number;inventory:(mode:Mode)=>Record<string,number>;progress:Progress;buy:(id:string)=>Promise<void>;tone:(win?:boolean)=>void};
 const Context=createContext<ContextType>(null!);
-export function Provider({children}:{children:React.ReactNode}){
+/**
+ * The toast key for a failure, from whatever the failing call actually said.
+ *
+ * api() below goes to real trouble to pull the code out of a failed edge response, and
+ * then every call site caught it and threw the code away, showing 'error' instead. That
+ * turned a specific, actionable failure into "Something didn't connect. Please try again."
+ * - which is not merely vaguer, it is advice that cannot work.
+ *
+ * aiUnavailable and agentBusy are gone from the map because nothing returns them any more:
+ * no function calls a model, so there is no provider allowance to be spent and no quota to
+ * be reported. They are kept here deliberately anyway, and the comment above says why - a
+ * deployment that has not yet picked up the function redeploy will still answer 503
+ * aiUnavailable, and "the AI is resting" is a better sentence than a connectivity error for
+ * that window. Once every deployment is current they can go.
+ */
+const TOAST_BY_CODE:Record<string,string>={
+  signIn:'signIn',
+  noRoute:'agentNoRoute',
+  aiUnavailable:'agentBusy',
+};
+export function toastKey(e:unknown):string{
+  const code=e instanceof Error?e.message:'';
+  return TOAST_BY_CODE[code]||'error';
+}export function Provider({children}:{children:React.ReactNode}){
  const [state,setState]=useState<LocalState>(load);const [notice,setNotice]=useState(''); const [sessions,setSessions]=useState<Record<Mode,Session|null>>({solo:null,arena:null});const [cloud,setCloud]=useState<Record<Mode,Cloud>>({solo:emptyCloud,arena:emptyCloud});
  // The numeral register is remembered per language, not globally: a reader who wants
  // Korean counting words and Chinese financial figures is picking two different
@@ -106,14 +131,14 @@ export function Provider({children}:{children:React.ReactNode}){
  });});},[clients,sessions,state.usernames,state.emails,refresh]);
  useEffect(()=>{const cleanup:(()=>void)[]=[];(['solo','arena'] as Mode[]).forEach(mode=>{const client=clients[mode],user=sessions[mode]?.user;if(!client||!user)return;const channel=client.channel('identity-'+mode+'-'+user.id).on('postgres_changes',{event:'*',schema:'public',table:'wallets',filter:`user_id=eq.${user.id}`},()=>refresh(mode)).on('postgres_changes',{event:'*',schema:'public',table:'inventory',filter:`user_id=eq.${user.id}`},()=>refresh(mode)).on('postgres_changes',{event:'*',schema:'public',table:'solo_progress',filter:`user_id=eq.${user.id}`},()=>refresh(mode)).on('postgres_changes',{event:'*',schema:'public',table:'profiles',filter:`user_id=eq.${user.id}`},()=>refresh(mode)).subscribe();cleanup.push(()=>{client.removeChannel(channel);});});return()=>cleanup.forEach(f=>f());},[clients,sessions,refresh]);
  // A failed edge call returns a non-2xx status AND a structured body such as
- // {"error":"aiUnavailable"}; supabase-js puts that in `error` and leaves `data`
+ // {"error":"noRoute"}; supabase-js puts that in `error` and leaves `data`
  // null, so reading only `data` would mask every real reason behind the generic
  // "error" toast. Recover the body's code first, and only fall back when the
  // response carries nothing usable.
  const api=async(mode:Mode,fn:string,data:unknown,signal?:AbortSignal)=>{const client=clients[mode];if(!client||!sessions[mode])throw new Error('signIn');const {data:result,error}=await client.functions.invoke(fn,{body:data as Record<string,unknown>,...(signal?{signal}:{})});if(error){console.error(error);let code='';try{const ctx=(error as {context?:Response}).context;if(ctx&&typeof ctx.json==='function'){const body=await ctx.json();if(body&&typeof body.error==='string')code=body.error;}}catch{/* body consumed or not JSON */}throw new Error(code||'error');}if(result?.error)throw new Error(result.error);return result;};
  const coins=(mode:Mode)=>sessions[mode]?cloud[mode].coins:mode==='solo'?state.coins:0;
  const inventory=(mode:Mode)=>sessions[mode]?cloud[mode].inventory:mode==='solo'?state.inventory:{};
- const buy=async(id:string)=>{const product=products.find(p=>p.id===id);if(!product)return;const mode=product.mode;if(coins(mode)<product.price){toast('notEnough');return;}if(mode==='arena'&&inventory(mode)[id])return;try{if(sessions[mode]){await api(mode,mode==='solo'?'solo-action':'room-action',{action:'buy',item:id});await refresh(mode);}else if(mode==='solo')setState(s=>s.coins>=product.price?{...s,coins:s.coins-product.price,inventory:{...s.inventory,[id]:(s.inventory[id]||0)+1}}:s);else{toast('signIn');return;}toast('purchased');}catch{toast('error');}};
+ const buy=async(id:string)=>{const product=products.find(p=>p.id===id);if(!product)return;const mode=product.mode;if(coins(mode)<product.price){toast('notEnough');return;}if(mode==='arena'&&inventory(mode)[id])return;try{if(sessions[mode]){await api(mode,mode==='solo'?'solo-action':'room-action',{action:'buy',item:id});await refresh(mode);}else if(mode==='solo')setState(s=>s.coins>=product.price?{...s,coins:s.coins-product.price,inventory:{...s.inventory,[id]:(s.inventory[id]||0)+1}}:s);else{toast('signIn');return;}toast('purchased');}catch(e){toast(toastKey(e));}};
  const tone=(win=false)=>{if(!state.sound)return;try{const a=new AudioContext();[0,...(win?[.12,.24]:[])].forEach((d,i)=>{const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=win?[523,659,784][i]:220;g.gain.setValueAtTime(.06,a.currentTime+d);g.gain.exponentialRampToValueAtTime(.001,a.currentTime+d+.18);o.start(a.currentTime+d);o.stop(a.currentTime+d+.2);});setTimeout(()=>a.close(),900);}catch{}};
  return <Context.Provider value={{state,setState,t,numerals,toast,clients,sessions,cloud,refresh,api,coins,inventory,progress:sessions.solo?cloud.solo.progress:state.progress,buy,tone}}>{children}{notice&&<div className="toast" role="status"><span className="toast-dot"/>{t(notice)}</div>}</Context.Provider>;
 }

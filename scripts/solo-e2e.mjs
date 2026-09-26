@@ -1,12 +1,13 @@
 // Deep test of the solo path: purchases, item use, rewards, replay protection,
-// malformed answers, rate limiting, and the daily AI hint cap.
-//
-// The AI cap is exercised through ai_hint_context directly rather than through the
-// edge function, because the limit lives in that function and the first ten calls
-// would each cost real OpenRouter requests. The edge function is a thin wrapper
-// around it, so this tests the actual limit for free.
+// malformed answers, rate limiting, and the fact that hints are no longer metered.
 //
 //   npm run test:solo
+//
+// There is no daily AI hint cap any more, because there is no server-side hint. Hints are
+// written on the player's own device by src/ai from committed weights, so there is no
+// request to count, no provider allowance to exhaust and no counter table. The section
+// below asserts that absence on purpose: it is the check that would fail if a server-side
+// hint path were ever reintroduced alongside the local one.
 import { createClient } from '@supabase/supabase-js';
 import pg from 'pg';
 
@@ -37,11 +38,33 @@ const fn = async (jwt, body) => {
   });
   return { status: r.status, json: await r.json().catch(() => ({})) };
 };
-const q = async (s, p = []) => (await db.query(s, p)).rows;
+const q = async (s, p = []) => {
+  try {
+    return (await db.query(s, p)).rows;
+  } catch (e) {
+    // Postgres reports a position, not a statement, and a test that fails with only a
+    // line number and an offset sends the reader looking in the wrong place. This happened:
+    // the reported offset pointed into a 185-character insert that was fine, because the
+    // query that actually failed was a third of that length.
+    console.error(`\n  SQL FAILED: ${e.message}`);
+    console.error(`  statement (${s.length} chars): ${JSON.stringify(s)}`);
+    console.error(`  parameters: ${JSON.stringify(p)}`);
+    throw e;
+  }
+};
 const throwaway = () => 'Solo-' + Math.random().toString(36).slice(2) + '!x';
 
 const made = [];
+// Counts taken before the run, so cleanup is judged against the database as it was found
+// rather than against zero. Asserting zero only holds on a project nobody has ever played:
+// this one has real accounts, real wallets and fifteen live solo challenges in it, and this
+// check was reporting the game's own data as residue the test had failed to remove.
+const RESIDUE = `select (select count(*)::int from auth.users) u, (select count(*)::int from public.wallets) w,
+    (select count(*)::int from public.inventory) i, (select count(*)::int from public.transactions) t,
+    (select count(*)::int from private.solo_challenges) c`;
+let baseline = null;
 try {
+  baseline = (await q(RESIDUE))[0];
   const email = `solo-${Date.now()}${Math.floor(Math.random() * 1e4)}@mailinator.com`;
   const password = throwaway();
   const { data: created, error: cErr } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
@@ -152,24 +175,53 @@ try {
   const buyUnknown = await call({ action: 'buy', item: 'moon' });
   ok('cannot buy an item from the other mode', !!buyUnknown.json.error, JSON.stringify(buyUnknown.json));
 
-  console.log('\nDAILY AI HINT CAP (exercised in SQL, no OpenRouter spend)');
-  await db.query('delete from private.ai_usage where user_id=$1', [uid]);
-  // ai_hint_context only serves a challenge that is not completed, so the one solved
-  // above is no longer eligible - it correctly refuses with 'Invalid challenge'.
-  const hintChallenge = (await q(`insert into private.solo_challenges (user_id,difficulty,level,category,prompt,lines,hint,answer,locale)
-     values ($1,'easy',3,'math','p','["a"]'::jsonb,'h','1234','en') returning id`, [uid]))[0].id;
-  let capErr = null;
-  for (let i = 1; i <= 11; i++) {
-    try { await q('select public.ai_hint_context($1,$2)', [uid, hintChallenge]); }
-    catch (e) { capErr = e.message; if (i !== 11) throw new Error(`unexpected failure on call ${i}: ${e.message}`); }
-  }
-  ok('the eleventh hint in a day is refused', /Daily AI limit/i.test(capErr || ''), capErr || 'no error raised');
-  const usage = await q('select requests from private.ai_usage where user_id=$1', [uid]);
-  ok('the counter stops at the cap', usage[0].requests === 10, `requests=${usage[0].requests}`);
+  console.log('\nTHE HINT PATH IS UNMETERED, AND SAYS SO');
+  // There used to be a daily cap here: eleven hints in a day, the eleventh refused, with a
+  // per-account counter in private.ai_usage and public.ai_hint_context doing the counting.
+  // All of that is gone. A hint is written on the player's own device by src/ai, from
+  // committed weights, so there is no request to meter, no allowance to exhaust and no
+  // counter to keep. What replaced the cap is an assertion of the new fact, so that if
+  // anyone reintroduces a server-side hint path this fails rather than passing quietly.
+  const gone = await q(`select
+      to_regclass('private.ai_usage') is null as no_usage_table,
+      to_regclass('private.ai_provider_usage') is null as no_provider_table,
+      to_regprocedure('public.ai_hint_context(uuid,uuid)') is null as no_hint_context,
+      to_regprocedure('public.record_ai_provider_use(text,integer,integer,integer,boolean)') is null as no_recorder`);
+  ok('the per-account AI counter table is gone', gone[0].no_usage_table === true, JSON.stringify(gone[0]));
+  ok('the provider ledger is gone', gone[0].no_provider_table === true);
+  ok('the hint context function is gone', gone[0].no_hint_context === true);
+  ok('the provider accounting function is gone', gone[0].no_recorder === true);
 
-  // A hint request must also be scoped to its owner.
-  const otherUsage = (await q('select requests from private.ai_usage where user_id=$1', [made[1]]))[0];
-  ok("another player's usage counter is untouched", !otherUsage, JSON.stringify(otherUsage));
+  // And a hint still arrives, with nothing metered and no provider involved.
+  //
+  // This asks for more hints than the old ten-a-day cap allowed, because a cap can only be
+  // shown to be gone by exceeding it. The challenges come from the real start action rather
+  // than being inserted into private.solo_challenges directly: a hand-written row has to
+  // agree with that table's columns and foreign keys by hand, and it failed here on a
+  // foreign key for a user the cleanup had already removed. Going through the API cannot
+  // drift from the schema.
+  //
+  // A challenge takes one hint and no more - the `used` array refuses the second - so this
+  // is twelve challenges rather than twelve hints on one.
+  //
+  // The bag is topped up first, and that is the whole subtlety: without it the run stops
+  // after two hints with "No items", which looks exactly like a cap being enforced and is
+  // not. The item economy and the removed daily cap are different things, and only one of
+  // them is being tested here.
+  await db.query(`update public.inventory set quantity = 50
+                  where user_id=$1 and mode='solo' and item_id='hint'`, [uid]);
+  const refused = [];
+  for (let i = 0; i < 12; i++) {
+    const started = await call({ action: 'start', difficulty: 'easy', level: 1, locale: 'en' });
+    const got = await call({ action: 'use', id: started.json?.id, item: 'hint' });
+    if (got.status !== 200 || !got.json?.hint) {
+      refused.push(`#${i + 1} HTTP ${got.status} ${JSON.stringify(got.json).slice(0, 60)}`);
+    }
+  }
+  ok('twelve hints, past the old ten-a-day cap, all served', refused.length === 0,
+    refused.length ? refused.join('; ') : 'no cap, no provider, no error');
+  ok('and none of them mentioned a quota or a limit',
+    !refused.some((s) => /quota|limit|exhaust|allowance/i.test(s)), refused.join('; ') || 'none did');
 
   console.log('\nAUTHORISATION');
   // A second account, to prove one player cannot touch another's challenge or items.
@@ -203,11 +255,23 @@ try {
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) console.log(`  FAILED ${id}: ${JSON.stringify(error)}`);
   }
-  await db.query("delete from public.rooms where created_at > now() - interval '30 minutes'");
-  const after = (await q(`select (select count(*)::int from auth.users) u, (select count(*)::int from public.wallets) w,
-    (select count(*)::int from public.inventory) i, (select count(*)::int from public.transactions) t,
-    (select count(*)::int from private.solo_challenges) c`))[0];
-  ok('no test residue left behind', after.u === 0 && after.w === 0 && after.i === 0 && after.t === 0 && after.c === 0, JSON.stringify(after));
+  // Scoped to the rooms these test accounts host. The previous form deleted anything created
+  // in the last thirty minutes, which on a project with real players in it would take their
+  // unfinished matches with it. This test does not create rooms, so in practice this is a
+  // safety net - but a safety net that deletes other people's games is worse than none.
+  if (made.length) {
+    await db.query('delete from public.rooms where host_id = any($1::uuid[])', [made]);
+  }
+  const after = (await q(RESIDUE))[0];
+  if (!baseline) {
+    ok('no test residue left behind', false, 'could not read a baseline to compare against');
+  } else {
+    const drift = Object.keys(after).filter((k) => after[k] !== baseline[k]);
+    ok('no test residue left behind', drift.length === 0,
+      drift.length
+        ? `left over: ${drift.map((k) => `${k} ${baseline[k]}->${after[k]}`).join(', ')}`
+        : `unchanged: ${JSON.stringify(after)}`);
+  }
   await db.end();
 }
 console.log(`\n${pass} passed, ${fail} failed`);

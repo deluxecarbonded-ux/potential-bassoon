@@ -20,4 +20,4 @@ export async function context(req:Request,opts?:{maxBytes?:number}){
 }
 export function locale(value:unknown){return typeof value==='string'&&supportedLocales.includes(value)?value:'en';}
 export function seed(){return crypto.getRandomValues(new Uint32Array(1))[0];}
-export function errorResponse(req:Request,e:unknown){console.error(e);const message=e instanceof Error?e.message:'';if(message==='signIn')return json(req,{error:'signIn'},401);if(/OpenRouter|free routes|Daily AI/i.test(message))return json(req,{error:'aiUnavailable'},503);return json(req,{error:'error'},400);}
+export function errorResponse(req:Request,e:unknown){console.error(e);const message=e instanceof Error?e.message:'';if(message==='signIn')return json(req,{error:'signIn'},401);return json(req,{error:'error'},400);}

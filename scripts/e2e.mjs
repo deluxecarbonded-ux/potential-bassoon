@@ -1,4 +1,4 @@
-// True end-to-end test of the deployed edge functions, including the live OpenRouter call.
+// True end-to-end test of the deployed edge functions.
 // Creates one throwaway user, exercises the real solo flow, then deletes the user
 // (ON DELETE CASCADE removes its profiles, challenges, progress, wallet and usage rows).
 import { createClient } from '@supabase/supabase-js';
@@ -70,16 +70,26 @@ try {
   const id = start.json?.id;
   if (!id) throw new Error('no challenge id returned');
 
-  // 5. THE OpenRouter test - runs inside the deployed function
-  const hint = await fn('ai-hint', { id }, token);
-  console.log(`5. ai-hint -> ${hint.status} ${JSON.stringify(hint.json).slice(0, 300)}`);
+  // 5. the hint path, which is the whole of what used to be a model call
+  //
+  // There is no ai-hint function and there is no provider. A hint is written in the
+  // browser by src/ai from committed weights, so there is nothing here to call: the same
+  // hint a player gets is produced with no network at all. What this asserts instead is
+  // that the stored hint the local engine starts from is present and safe to show, since
+  // that is the floor the local path falls back to.
+  const use = await fn('solo-action', { action: 'use', id, item: 'hint' }, token);
+  const hintText = String(use.json?.hint ?? '');
+  console.log(`5. solo-action use hint -> ${use.status} ${JSON.stringify(use.json).slice(0, 200)}`);
+  console.log(`   stored hint length ${hintText.length}, leaks four digits: ${/\d{4}/.test(hintText)}`);
+  if (!hintText) console.log('   WARNING: no stored hint, so the local engine has no floor to fall back on');
 
   // 6. wrong answer must be rejected
   const wrong = await fn('solo-action', { action: 'answer', id, answer: '0000' }, token);
   console.log(`6. wrong answer -> ${wrong.status} ${JSON.stringify(wrong.json)}`);
 
-  // 7. the daily AI cap must be enforced by the database
-  console.log(`7. usage rows recorded: ${(await client.from('profiles').select('user_id').eq('mode', 'solo')).data?.length ?? 0} profile visible to caller (own rows only)`);
+  // 7. the agent function answers, and reports no model
+  const status = await fn('agent', { op: 'status' }, token);
+  console.log(`7. agent status -> ${status.status} route=${status.json?.route} canWrite=${status.json?.canWrite} capacity=${'capacity' in (status.json ?? {})}`);
 } catch (e) {
   console.error(`\nE2E ERROR: ${e.message}`);
 } finally {

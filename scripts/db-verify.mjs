@@ -41,7 +41,7 @@ console.table(
             from pg_proc p join pg_namespace n on n.oid=p.pronamespace
             where n.nspname in ('public','private') and p.proname in
               ('is_room_member','ensure_profile','buy_item','create_solo_challenge',
-               'solo_action','advance_room','room_action','ai_hint_context')
+               'solo_action','advance_room','room_action')
             order by 1,2`))
 );
 

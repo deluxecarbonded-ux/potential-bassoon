@@ -23,8 +23,15 @@ const BOB = '22222222-2222-4222-8222-222222222222';
 const ROOM = '33333333-3333-4333-8333-333333333333';
 
 // Runs `sql` as `role` with an optional acting user, inside a SAVEPOINT so that a
-// denied statement cannot poison the enclosing fixture transaction. SET LOCAL is
-// also reverted by ROLLBACK TO SAVEPOINT, so the role never leaks between checks.
+// denied statement cannot poison the enclosing fixture transaction.
+//
+// The role does leak, on the success path. SET LOCAL lasts for the transaction, and
+// RELEASE SAVEPOINT only drops the savepoint - it does not undo the SET - so after any
+// successful call this connection is still acting as `role` until something resets it.
+// Only ROLLBACK TO SAVEPOINT, which is the failure path, puts it back. The comment here used
+// to claim the opposite, which was true only of failures and quietly wrong about the rest:
+// every query after the first successful as() has been running as that role. Anything that
+// needs the owner has to ask for it explicitly, through owner() below.
 let sp = 0;
 async function as(role, uid, sql) {
   const name = `sp_${sp++}`;
@@ -41,6 +48,19 @@ async function as(role, uid, sql) {
   } catch (e) {
     await client.query(`rollback to savepoint ${name}`);
     return { ok: false, error: e.message };
+  }
+}
+
+// Runs `sql` as the connection owner, whatever role a previous as() left behind. Needed
+// for anything that reads the private schema, which no client role has USAGE on - which is
+// the point of the private schema, and the reason such a query cannot be an RLS check.
+async function owner(sql) {
+  await client.query('reset role');
+  try {
+    return await client.query(sql);
+  } finally {
+    // Back to the owner for whatever runs next; every as() sets its own role anyway.
+    await client.query('reset role');
   }
 }
 
@@ -103,15 +123,33 @@ const solo = await as('authenticated', ALICE, `select public.solo_action('${ALIC
 check('authenticated CANNOT call solo_action (want denied)', solo.ok === false, solo.error);
 const room = await as('authenticated', ALICE, `select public.room_action('${ALICE}','create',jsonb_build_object('mode','first','rounds',3,'locale','en','category','math'))`);
 check('authenticated CANNOT call room_action (want denied)', room.ok === false, room.error);
-const hint = await as('authenticated', ALICE, `select public.ai_hint_context('${ALICE}','${ROOM}')`);
-check('authenticated CANNOT call ai_hint_context (want denied)', hint.ok === false, hint.error);
+
+// The hosted-AI objects are gone, so there is nothing left to protect from a client, and
+// saying so is the check: if a provider ledger or a hint-context function ever reappears,
+// this fails rather than quietly passing against a function that no longer exists.
+//
+// It runs as the owner rather than through as(), because asking `authenticated` whether
+// private.ai_usage exists needs USAGE on schema private - which it has never had and must
+// not have. The question is therefore unaskable as that role, and comes back "permission
+// denied for schema private", which is the opposite of a useful assertion.
+const gone = await owner(`
+  select to_regclass('private.ai_usage') is null as usage,
+         to_regclass('private.ai_provider_usage') is null as provider,
+         to_regprocedure('public.ai_hint_context(uuid,uuid)') is null as hintctx,
+         to_regprocedure('public.record_ai_provider_use(text,integer,integer,integer,boolean)') is null as recorder,
+         to_regprocedure('public.ai_provider_today()') is null as today`);
+check('no hosted-AI objects remain in the database', Object.values(gone.rows[0]).every((v) => v === true), JSON.stringify(gone.rows[0]));
+
+// And a client must not be able to reach what is left of it either.
+const privUsage = await as('authenticated', ALICE, `select to_regclass('private.ai_usage')`);
+check('authenticated cannot even look for the dropped table', privUsage.ok === false || privUsage.rows.length === 0, privUsage.error || 'no rows');
 
 // ensure_profile is granted to authenticated, and must still refuse an anon caller.
 const epAnon = await as('anon', null, `select public.ensure_profile('solo','X')`);
 check('anon CANNOT call ensure_profile (want denied)', epAnon.ok === false, epAnon.error);
 
 // Anonymous execute rights must not exist on the private helpers.
-const privExec = await client.query(`
+const privExec = await owner(`
   select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   join information_schema.routine_privileges rp on rp.routine_name=p.proname
   where n.nspname='private' and rp.grantee in ('anon','authenticated')`);
