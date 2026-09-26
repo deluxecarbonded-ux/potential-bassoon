@@ -27,7 +27,7 @@ function load(){try{const saved=JSON.parse(localStorage.getItem('exotic-v1')||'{
 export const products=[{id:'hint',mode:'solo',price:30,title:'hintPack',description:'hintDesc'},{id:'digit',mode:'solo',price:70,title:'digitPack',description:'digitDesc'},{id:'moon',mode:'arena',price:100,title:'nightPack',description:'nightDesc'},{id:'crown',mode:'arena',price:250,title:'crownPack',description:'crownDesc'}] as const;
 type Cloud={coins:number;inventory:Record<string,number>;progress:Progress;name:string;wins:number;emblem:string};
 const emptyCloud:Cloud={coins:0,inventory:{},progress:{},name:'',wins:0,emblem:''};
-type ContextType={state:LocalState;setState:React.Dispatch<React.SetStateAction<LocalState>>;t:(key:string)=>string;numerals:string;toast:(key:string)=>void;clients:Record<Mode,SupabaseClient|null>;sessions:Record<Mode,Session|null>;cloud:Record<Mode,Cloud>;refresh:(mode:Mode)=>Promise<void>;api:(mode:Mode,fn:string,data:unknown)=>Promise<any>;coins:(mode:Mode)=>number;inventory:(mode:Mode)=>Record<string,number>;progress:Progress;buy:(id:string)=>Promise<void>;tone:(win?:boolean)=>void};
+type ContextType={state:LocalState;setState:React.Dispatch<React.SetStateAction<LocalState>>;t:(key:string,vars?:Record<string,string|number>)=>string;numerals:string;toast:(key:string)=>void;clients:Record<Mode,SupabaseClient|null>;sessions:Record<Mode,Session|null>;cloud:Record<Mode,Cloud>;refresh:(mode:Mode)=>Promise<void>;api:(mode:Mode,fn:string,data:unknown,signal?:AbortSignal)=>Promise<any>;coins:(mode:Mode)=>number;inventory:(mode:Mode)=>Record<string,number>;progress:Progress;buy:(id:string)=>Promise<void>;tone:(win?:boolean)=>void};
 const Context=createContext<ContextType>(null!);
 export function Provider({children}:{children:React.ReactNode}){
  const [state,setState]=useState<LocalState>(load);const [notice,setNotice]=useState(''); const [sessions,setSessions]=useState<Record<Mode,Session|null>>({solo:null,arena:null});const [cloud,setCloud]=useState<Record<Mode,Cloud>>({solo:emptyCloud,arena:emptyCloud});
@@ -38,7 +38,10 @@ export function Provider({children}:{children:React.ReactNode}){
  // nothing here, and its id is the bare language code.
  const register=state.numerals[state.locale]||'';
  const numerals=register?state.locale+'#'+register:state.locale;
- const t=useCallback((key:string)=>translate(state.locale,key,numerals),[state.locale,numerals]);
+ // vars fills {name} placeholders in a translated sentence. See translate(): a sentence
+ // that has to name a count cannot be built by gluing translated fragments together,
+ // because where the number goes differs per language.
+ const t=useCallback((key:string,vars?:Record<string,string|number>)=>translate(state.locale,key,numerals,vars),[state.locale,numerals]);
  const toast=useCallback((key:string)=>{setNotice(key);},[]);
  useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),4200);return()=>clearTimeout(id);},[notice]);
  useEffect(()=>{localStorage.setItem('exotic-v1',JSON.stringify(state));document.documentElement.dataset.theme=state.theme;document.documentElement.lang=state.locale;document.documentElement.dir=isRTL(state.locale)?'rtl':'ltr';document.documentElement.dataset.numerals=register;document.documentElement.dataset.motion=state.motion?'reduced':'full';
@@ -59,7 +62,7 @@ export function Provider({children}:{children:React.ReactNode}){
  // null, so reading only `data` would mask every real reason behind the generic
  // "error" toast. Recover the body's code first, and only fall back when the
  // response carries nothing usable.
- const api=async(mode:Mode,fn:string,data:unknown)=>{const client=clients[mode];if(!client||!sessions[mode])throw new Error('signIn');const {data:result,error}=await client.functions.invoke(fn,{body:data as Record<string,unknown>});if(error){console.error(error);let code='';try{const ctx=(error as {context?:Response}).context;if(ctx&&typeof ctx.json==='function'){const body=await ctx.json();if(body&&typeof body.error==='string')code=body.error;}}catch{/* body consumed or not JSON */}throw new Error(code||'error');}if(result?.error)throw new Error(result.error);return result;};
+ const api=async(mode:Mode,fn:string,data:unknown,signal?:AbortSignal)=>{const client=clients[mode];if(!client||!sessions[mode])throw new Error('signIn');const {data:result,error}=await client.functions.invoke(fn,{body:data as Record<string,unknown>,...(signal?{signal}:{})});if(error){console.error(error);let code='';try{const ctx=(error as {context?:Response}).context;if(ctx&&typeof ctx.json==='function'){const body=await ctx.json();if(body&&typeof body.error==='string')code=body.error;}}catch{/* body consumed or not JSON */}throw new Error(code||'error');}if(result?.error)throw new Error(result.error);return result;};
  const coins=(mode:Mode)=>sessions[mode]?cloud[mode].coins:mode==='solo'?state.coins:0;
  const inventory=(mode:Mode)=>sessions[mode]?cloud[mode].inventory:mode==='solo'?state.inventory:{};
  const buy=async(id:string)=>{const product=products.find(p=>p.id===id);if(!product)return;const mode=product.mode;if(coins(mode)<product.price){toast('notEnough');return;}if(mode==='arena'&&inventory(mode)[id])return;try{if(sessions[mode]){await api(mode,mode==='solo'?'solo-action':'room-action',{action:'buy',item:id});await refresh(mode);}else if(mode==='solo')setState(s=>s.coins>=product.price?{...s,coins:s.coins-product.price,inventory:{...s.inventory,[id]:(s.inventory[id]||0)+1}}:s);else{toast('signIn');return;}toast('purchased');}catch{toast('error');}};

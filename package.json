@@ -32,6 +32,12 @@
     "test:locales": "node --experimental-strip-types scripts/test-locales.mjs",
     "test:ai-hint": "node --env-file-if-exists=.env scripts/test-ai-hint.mjs",
     "test:hint-tidy": "node --experimental-strip-types scripts/test-hint-tidy.mjs",
+    "test:router": "node --experimental-strip-types scripts/test-router.mjs",
+    "test:agent-guard": "node --experimental-strip-types scripts/test-agent-guard.mjs",
+    "test:diff": "node --experimental-strip-types scripts/test-diff.mjs",
+    "test:agent-plan": "node --experimental-strip-types scripts/test-agent-plan.mjs",
+    "test:agent": "node --env-file-if-exists=.env scripts/test-agent.mjs",
+    "agent:serve": "node --experimental-strip-types scripts/agent-bridge.mjs",
     "session:make": "node --env-file-if-exists=.env scripts/make-session.mjs",
     "user:delete": "node --env-file-if-exists=.env scripts/delete-test-user.mjs",
     "test:split-accounts": "node --env-file-if-exists=.env scripts/split-accounts.mjs"

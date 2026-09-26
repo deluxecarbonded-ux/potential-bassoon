@@ -42,6 +42,76 @@
 .gate-avatar{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:var(--surface);color:var(--fg);flex:none}
 .gate-actions{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:5px}
 .auth-scope{margin:-4px 0 4px;font-size:12px;line-height:1.55;color:var(--muted)}
+/* The build agent. A review surface, so it reads as a document rather than as chrome:
+   the instruction at the top, then each proposed change as a card with a diff you can
+   open, and the destructive ones marked before anything is written. */
+.agent-page{max-width:900px;margin:0 auto;padding:44px 20px 80px;display:flex;flex-direction:column;gap:20px}
+.agent-head h1{font-size:31px;letter-spacing:-.5px;margin:9px 0 11px}
+.agent-head p{font-size:13px;line-height:1.65;max-width:660px}
+.agent-empty{display:grid;place-items:center;gap:12px;padding:90px 20px;text-align:center}
+.agent-empty h1{font-size:25px}
+.agent-empty p{max-width:380px}
+.agent-route{display:flex;gap:13px;align-items:flex-start;padding:15px 17px;border-radius:14px;border:1px solid var(--surface-2);background:var(--surface);font-size:12px;line-height:1.6}
+.agent-route>svg{flex:none;margin-top:2px}
+.agent-route strong{display:block;font-size:12px;margin-bottom:3px}
+.agent-route p{color:var(--muted)}
+.agent-route.live>svg{color:var(--fg)}
+.agent-route.dead>svg{color:#c2703a}
+.agent-compose{display:flex;flex-direction:column;gap:13px;padding:19px;border:1px solid var(--surface-2);border-radius:15px;background:var(--surface)}
+.agent-compose label{display:flex;flex-direction:column;gap:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+.agent-compose textarea{width:100%;background:var(--bg);border:1px solid var(--surface-2);border-radius:11px;padding:13px 14px;font:inherit;font-size:13px;line-height:1.6;color:var(--fg);resize:vertical;text-transform:none;letter-spacing:normal;min-height:82px}
+.agent-compose textarea:focus{outline:none;border-color:var(--fg)}
+.agent-compose-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.agent-problem{display:flex;align-items:center;gap:8px;font-size:12px;color:#c2703a}
+.agent-plan{display:flex;flex-direction:column;gap:14px}
+.agent-plan-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.agent-plan-head h2{font-size:17px;line-height:1.45}
+.agent-plan-head p{font-size:12px;margin-top:5px}
+.agent-dropped{display:flex;align-items:center;gap:9px;padding:11px 14px;border-radius:11px;background:var(--surface);font-size:12px;color:var(--muted)}
+.agent-ops{display:flex;flex-direction:column;gap:9px}
+.agent-op{border:1px solid var(--surface-2);border-radius:12px;padding:13px 15px;background:var(--surface);transition:border-color .15s}
+.agent-op.on{border-color:var(--fg)}
+.agent-op.danger{border-color:#c2703a}
+.agent-op.danger.on{border-color:#c2703a;background:color-mix(in srgb,#c2703a 8%,var(--surface))}
+.agent-op-head{display:flex;align-items:center;gap:10px;cursor:pointer;flex-wrap:wrap}
+.agent-op-head code{font-size:12px;font-weight:550;word-break:break-all;flex:1;min-width:120px}
+.agent-op-head input[type=checkbox]{width:15px;height:15px;accent-color:var(--fg);cursor:pointer;flex:none}
+.agent-op-badge{display:inline-flex;align-items:center;gap:5px;font-size:9px;letter-spacing:.6px;text-transform:uppercase;padding:4px 8px;border-radius:6px;background:var(--bg);color:var(--muted);flex:none}
+.agent-op-badge.create{color:#3f7d4f}
+.agent-op-badge.update{color:#4a6d99}
+.agent-op-badge.delete{color:#c2703a}
+.agent-op-stat{font-size:11px;color:var(--muted);flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.agent-op-stat b{color:#3f7d4f;font-weight:600}
+.agent-op-stat i{color:#c2703a;font-style:normal}
+.agent-op-toggle{background:none;border:0;color:var(--muted);cursor:pointer;padding:3px;display:grid;place-items:center;flex:none}
+.agent-op-toggle .flip{transform:rotate(-90deg)}
+.agent-op-note{font-size:12px;color:var(--muted);margin:9px 0 0;line-height:1.55}
+.agent-op-warn{display:flex;align-items:center;gap:7px;font-size:12px;color:#c2703a;margin:9px 0 0}
+.agent-diff{margin:12px 0 2px;padding:11px 0;background:var(--bg);border-radius:9px;overflow-x:auto;font-size:11.5px;line-height:1.65;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;max-height:340px;overflow-y:auto}
+.agent-diff .dl{display:block;padding:0 13px;white-space:pre}
+.agent-diff .dl-mark{display:inline-block;width:15px;color:var(--muted);user-select:none}
+.agent-diff .dl.add{background:color-mix(in srgb,#3f7d4f 13%,transparent);color:#3f7d4f}
+.agent-diff .dl.del{background:color-mix(in srgb,#c2703a 13%,transparent);color:#c2703a}
+.agent-diff .dl.same{color:var(--soft)}
+.agent-empty-note{font-size:13px;padding:20px 0}
+.agent-danger{display:flex;align-items:center;gap:9px;padding:12px 15px;border-radius:11px;background:color-mix(in srgb,#c2703a 11%,transparent);font-size:12px;color:#c2703a}
+.agent-apply{display:flex;align-items:center;gap:15px;flex-wrap:wrap;padding-top:4px}
+.agent-apply .muted{font-size:11px;max-width:340px;line-height:1.5}
+.agent-result{border:1px solid var(--surface-2);border-radius:13px;padding:17px 19px;background:var(--surface)}
+.agent-result.good{border-color:#3f7d4f}
+.agent-result.partial{border-color:#c2703a}
+.agent-result h2{font-size:15px;margin-bottom:11px}
+.agent-result ul{display:flex;flex-direction:column;gap:6px;margin-bottom:11px}
+.agent-result li{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.agent-result li code{word-break:break-all}
+.agent-result li.ok>svg{color:#3f7d4f}
+.agent-result li.no>svg{color:#c2703a}
+.agent-result p{font-size:11px}
+.agent-boundaries{border:1px solid var(--surface-2);border-radius:12px;background:var(--surface);font-size:12px}
+.agent-boundaries summary{cursor:pointer;padding:14px 17px;font-size:12px;color:var(--muted)}
+.agent-boundaries-body{padding:0 17px 15px;display:flex;flex-direction:column;gap:8px}
+.agent-boundaries-body p{color:var(--muted);line-height:1.65}
+.agent-boundaries-body strong{color:var(--fg);margin-inline-end:7px}
 .code-entry{width:100%;max-width:440px}.code-input-wrap{max-width:none}.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin:0 0 18px}.keypad button{background:var(--surface);border-radius:12px;min-height:52px;font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;font-size:20px;font-weight:650}.keypad button:hover:not(:disabled){background:var(--surface-2);transform:none}.keypad button:active:not(:disabled){transform:translateY(1px)}.room-puzzle .keypad button,.room-puzzle .digit-display>span{background:var(--bg)}.misses{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 12px}.misses span{font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;letter-spacing:2px;font-size:12px;padding:6px 8px;border-radius:7px;background:var(--surface);opacity:.55}.player-score{display:inline-flex;align-items:center;gap:6px}.room-puzzle .category-tag{margin-top:22px;width:fit-content}.answer-panel .code-entry,.room-puzzle .code-entry{max-width:440px}@media(max-width:700px){.arena-pill{display:none}}[dir=rtl] .text-link>svg:first-child{transform:scaleX(-1)}
 
 /* Chinese, Japanese and Korean write numerals in their own characters, and those

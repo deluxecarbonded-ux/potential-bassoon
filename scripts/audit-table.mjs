@@ -33,8 +33,17 @@ const scriptOf = (ch) => {
   return null;
 };
 
-// Latin proper nouns and acronyms that legitimately appear inside non-Latin cells.
-const LATIN_OK = new Set(["supabase", "ai", "exotic", "manrope", "cairo", "noto", "url", "anon"]);
+// Latin proper nouns, acronyms and command names that legitimately appear inside
+// non-Latin cells. A command is a command in every language - "tsc" is not a word that
+// gets translated, it is a thing you type - so flagging it would only push translators
+// to transliterate something that would then not work.
+const LATIN_OK = new Set([
+  "supabase", "ai", "exotic", "manrope", "cairo", "noto", "url", "anon", "github",
+  "tsc", "ts", "commit", "deploy", "npm", "serve", "agent", "dev", "server",
+  // A script name is one token to a person reading it and two words to a tokenizer, so
+  // both halves are allowed rather than the punctuation being special-cased.
+  "agent:serve", "run", "localhost",
+]);
 
 const lines = readFileSync("src/i18n.ts", "utf8").split("\n");
 let problems = 0, checked = 0;
@@ -59,7 +68,11 @@ for (const line of lines) {
     if (!v) { console.log(`FAIL  ${key}[${lang}]: empty`); problems++; continue; }
     // The table stores newlines as a literal \n escape; drop it so the escape's
     // own letters are not read as a stray Latin word.
-    const text = v.replace(/\\n/g, " ");
+    // {name} placeholders are dropped for the same reason and for a stronger one: they
+    // are not prose in any language, they are the shape a sentence leaves for a value
+    // to be substituted into, so their letters are never a translation mistake. A
+    // missing variable renders as nothing at runtime, which is checked by test-locales.
+    const text = v.replace(/\\n/g, " ").replace(/\{[a-zA-Z][a-zA-Z0-9_]*\}/g, " ");
     const allowed = ALLOWED[lang];
     const foreign = new Map();
     let run = "", runScript = null;

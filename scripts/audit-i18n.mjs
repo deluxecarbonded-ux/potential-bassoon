@@ -1,11 +1,21 @@
 // Cross-checks translation keys: every t('x') used in the app must exist in the table
 // (otherwise the UI renders the raw key), and reports table entries nothing references.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 const i18n = readFileSync('src/i18n.ts', 'utf8');
-const app = readFileSync('src/App.tsx', 'utf8');
-const state = readFileSync('src/state.tsx', 'utf8');
 const puzzles = readFileSync('supabase/functions/_shared/puzzles.ts', 'utf8');
+
+// Every source file that can call t(). Derived from the directory rather than listed, so
+// a component added today is covered today.
+//
+// This used to be a hardcoded list of three files, and that fails open: a new component's
+// keys were missing from the table, the UI rendered the raw key, and this script reported
+// nothing wrong. That is exactly what happened with the build agent panel.
+const SOURCES = [
+  ...readdirSync('src').filter((f) => /\.(ts|tsx)$/.test(f)).map((f) => join('src', f)),
+  'supabase/functions/_shared/puzzles.ts',
+];
 
 const tableKeys = new Set();
 for (const line of i18n.split('\n')) {
@@ -20,7 +30,8 @@ for (const line of i18n.split('\n')) {
 }
 
 const used = new Map();
-for (const [name, src] of [['App.tsx', app], ['state.tsx', state], ['puzzles.ts', puzzles]]) {
+for (const name of SOURCES) {
+  const src = readFileSync(name, 'utf8');
   for (const m of src.matchAll(/\bt\(\s*['"]([a-zA-Z0-9_]+)['"]/g)) {
     if (!used.has(m[1])) used.set(m[1], new Set());
     used.get(m[1]).add(name);
@@ -33,7 +44,11 @@ for (const [name, src] of [['App.tsx', app], ['state.tsx', state], ['puzzles.ts'
     }
   }
   // t(mode==='solo'?'completed':'wins') style with . after
-  for (const m of src.matchAll(/\?\s*['"]([a-zA-Z0-9_]+)['"]\s*:\s*['"]([a-zA-Z0-9_]+)['"]\s*\)/g)) {
+  // A ternary inside a t() call, including the t(mode==='x'?'a':'b') form. Anchored on
+  // t( so it cannot pick up an unrelated conditional - cn2('card', ok?'on':'dead') is a
+  // class name, not a translation key, and reading it as one produced four phantom
+  // "missing" keys the first time this was widened to the whole src directory.
+  for (const m of src.matchAll(/\bt\([^)]*?\?\s*['"]([a-zA-Z0-9_]+)['"]\s*:\s*['"]([a-zA-Z0-9_]+)['"]/g)) {
     for (const k of [m[1], m[2]]) {
       if (!used.has(k)) used.set(k, new Set());
       used.get(k).add(name);
