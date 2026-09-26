@@ -39,6 +39,10 @@ const scriptOf = (ch) => {
 // to transliterate something that would then not work.
 const LATIN_OK = new Set([
   "supabase", "ai", "exotic", "manrope", "cairo", "noto", "url", "anon", "github",
+  // A browser API name is the same case as a product name: "WebGPU" is the thing the
+  // reader has to look for in their browser settings, so transliterating it would
+  // leave them with a term they cannot search for.
+  "webgpu",
   "tsc", "ts", "commit", "deploy", "npm", "serve", "agent", "dev", "server",
   // A script name is one token to a person reading it and two words to a tokenizer, so
   // both halves are allowed rather than the punctuation being special-cased.

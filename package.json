@@ -32,6 +32,7 @@
     "test:locales": "node --experimental-strip-types scripts/test-locales.mjs",
     "test:ai-hint": "node --env-file-if-exists=.env scripts/test-ai-hint.mjs",
     "test:hint-tidy": "node --experimental-strip-types scripts/test-hint-tidy.mjs",
+    "test:local-ai": "node --experimental-strip-types scripts/test-local-ai.mjs",
     "test:router": "node --experimental-strip-types scripts/test-router.mjs",
     "test:agent-guard": "node --experimental-strip-types scripts/test-agent-guard.mjs",
     "test:diff": "node --experimental-strip-types scripts/test-diff.mjs",
@@ -44,6 +45,7 @@
     "test:split-accounts": "node --env-file-if-exists=.env scripts/split-accounts.mjs"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.85",
     "@supabase/supabase-js": "^2.57.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",

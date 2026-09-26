@@ -158,11 +158,20 @@ create table public.profiles (
   user_id       uuid        not null references auth.users(id) on delete cascade,
   mode          text        not null check (mode in ('solo','arena')),
   display_name  text        not null check (char_length(display_name) between 2 and 24),
+  email         text        not null default '',
   emblem        text        not null default '' check (emblem in ('','moon','crown')),
   wins          integer     not null default 0 check (wins >= 0),
   created_at    timestamptz not null default now(),
   primary key (user_id, mode)
 );
+
+-- The signup address. Added as a named table constraint rather than left inline on the
+-- column, because an inline column check is auto-named profiles_email_check while the
+-- migration names it profiles_email_format - the same rule under two names, which
+-- verify:schema reports as drift even though the rule is identical.
+alter table public.profiles
+  add constraint profiles_email_format
+  check (email = '' or email ~* '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$');
 
 comment on column public.profiles.emblem is
   'Arena only, and only ever moon or crown. The empty default means "no emblem", '
@@ -561,6 +570,52 @@ begin
   end if;
 end;
 $$;
+
+-- ----------------------------------------------------------------------------
+--  public.ensure_profile_with_email - ensure_profile, plus the signup address
+--
+--  Sign in is by username alone, and the address Supabase keys the account on is
+--  derived from that username rather than typed, so nothing has to look an account up
+--  before a session can exist. That leaves nowhere for a real address to live, so it
+--  is kept here: written once, when the profile row is created.
+--
+--  ensure_profile is left exactly as it is and this delegates to it, rather than
+--  gaining a third parameter. A defaulted parameter would have left the old
+--  two-argument function beside it and made every two-argument call ambiguous, which
+--  Postgres resolves by refusing to choose. Delegating also means the starter kit is
+--  granted in one place instead of being copied.
+--
+--  The update is guarded on email = '', so the address is written once and a later
+--  sign in from another device cannot repoint it.
+-- ----------------------------------------------------------------------------
+
+create or replace function public.ensure_profile_with_email(
+  p_mode  text,
+  p_name  text default 'Explorer',
+  p_email text default ''
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null or p_mode not in ('solo','arena') then
+    raise exception 'Unauthorized';
+  end if;
+
+  perform public.ensure_profile(p_mode, p_name);
+
+  if length(trim(coalesce(p_email, ''))) > 0 then
+    update public.profiles
+       set email = left(trim(p_email), 254)
+     where user_id = auth.uid() and mode = p_mode and email = '';
+  end if;
+end;
+$$;
+
+revoke all on function public.ensure_profile_with_email(text, text, text) from public, anon;
+grant execute on function public.ensure_profile_with_email(text, text, text) to authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 --  public.create_solo_challenge - open a solo level
