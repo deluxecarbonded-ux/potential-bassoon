@@ -22,6 +22,7 @@
     "smoke:app": "node --env-file-if-exists=.env scripts/app-smoke.mjs",
     "smoke:functions": "node --env-file-if-exists=.env scripts/functions-smoke.mjs",
     "test:e2e": "node --env-file-if-exists=.env scripts/e2e.mjs",
+    "test:arena": "node --env-file-if-exists=.env scripts/arena-e2e.mjs",
     "test:ai-hint": "node --env-file-if-exists=.env scripts/test-ai-hint.mjs",
     "session:make": "node --env-file-if-exists=.env scripts/make-session.mjs",
     "user:delete": "node --env-file-if-exists=.env scripts/delete-test-user.mjs"
