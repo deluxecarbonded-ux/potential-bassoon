@@ -1,0 +1,9 @@
+# Every route in this app is decided in the browser, not on a server: /agent, /solo,
+# /arena, /solo/play/:difficulty/:level and the rest are all real paths that resolve to the
+# same index.html. A static host asked for /solo/settings would look for a file that does
+# not exist and answer 404, which would break every route except the home page on a hard
+# refresh or a shared link. 200 rewrites the request to index.html while keeping the URL,
+# so React Router sees the path it expects.
+#
+# This is a Cloudflare Pages rule and is copied verbatim into dist/ by the build.
+/*  /index.html  200

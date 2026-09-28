@@ -143,7 +143,7 @@
 .agent-boundaries-body{padding:0 17px 15px;display:flex;flex-direction:column;gap:8px}
 .agent-boundaries-body p{color:var(--muted);line-height:1.65}
 .agent-boundaries-body strong{color:var(--fg);margin-inline-end:7px}
-.code-entry{width:100%;max-width:440px}.code-input-wrap{max-width:none}.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin:0 0 18px}.keypad button{background:var(--surface);border-radius:12px;min-height:52px;font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;font-size:20px;font-weight:650}.keypad button:hover:not(:disabled){background:var(--surface-2);transform:none}.keypad button:active:not(:disabled){transform:translateY(1px)}.room-puzzle .keypad button,.room-puzzle .digit-display>span{background:var(--bg)}.misses{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 12px}.misses span{font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;letter-spacing:2px;font-size:12px;padding:6px 8px;border-radius:7px;background:var(--surface);opacity:.55}.player-score{display:inline-flex;align-items:center;gap:6px}.room-puzzle .category-tag{margin-top:22px;width:fit-content}.answer-panel .code-entry,.room-puzzle .code-entry{max-width:440px}@media(max-width:700px){.arena-pill{display:none}}[dir=rtl] .text-link>svg:first-child{transform:scaleX(-1)}
+.code-entry{width:100%;max-width:440px}.code-input-wrap{max-width:none}.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin:0 0 18px}.keypad button{background:var(--surface);border-radius:12px;min-height:52px;font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;font-size:20px;font-weight:650}.keypad button:hover:not(:disabled){background:var(--surface-2);transform:none}.keypad button:active:not(:disabled){transform:translateY(1px)}.room-puzzle .keypad button,.room-puzzle .digit-display>span{background:var(--bg)}.misses{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 12px}.misses span{font-family:'ArabicNumerals','UrduNumerals','Manrope','Cairo',sans-serif;letter-spacing:2px;font-size:12px;padding:6px 8px;border-radius:7px;background:var(--surface);opacity:.55}.player-score{display:inline-flex;align-items:center;gap:6px}.room-puzzle .category-tag{margin-top:22px;width:fit-content}.answer-panel .code-entry,.room-puzzle .code-entry{max-width:440px}@media(max-width:700px){.arena-pill{display:none}}[dir=rtl] .text-link>svg:first-child{transform:scaleX(-1)}[dir=rtl] .lucide-arrow-left,[dir=rtl] .lucide-arrow-right,[dir=rtl] .lucide-arrow-up-right,[dir=rtl] .lucide-move-up-right,[dir=rtl] .lucide-chevron-right,[dir=rtl] .lucide-log-out,[dir=rtl] .lucide-send{transform:scaleX(-1)}
 
 /* Chinese, Japanese and Korean write numerals in their own characters, and those
    characters are full-width. The display type is tracked tight for Latin - a fifth
@@ -169,3 +169,79 @@
    short one, so it is allowed to wrap and to hug the end of the row. */
 .settings-row>.numeral-registers{flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:700px){.settings-row>.numeral-registers{padding:4px}.settings-row>.numeral-registers button{padding:9px 11px;font-size:10px}}
+
+/* ============================================================================
+   The mode switch: agent <-> chat, on the /agent route.
+
+   Two named destinations rather than a boolean, so the control is a radiogroup: it
+   announces "agent, selected" and not "on". The thumb is painted from one custom
+   property, --ms-index, which means the slide is a single animated property and the
+   two states share one rule instead of each carrying its own.
+
+   Colours come from the theme variables rather than literals, so it is correct in
+   both themes and in any theme added later without touching this. The existing
+   .toggle used by Settings is a different class on purpose - that one is a bare
+   boolean pill, and reusing the name here would have made the two indistinguishable
+   in the cascade.
+   ============================================================================ */
+.mode-switch{position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;align-items:center;gap:0;background:var(--surface);border:1px solid var(--surface-2);border-radius:12px;padding:4px;isolation:isolate;width:100%;max-width:330px}
+.mode-switch-thumb{position:absolute;z-index:-1;inset-block:4px;inset-inline-start:4px;width:calc((100% - 8px) / 2);background:var(--fg);border-radius:9px;transform:translateX(calc(var(--ms-index) * 100%));
+  /* The overshoot is what makes it feel mechanical rather than electronic: it is pushed
+     slightly past its resting place and settles back, which reads as a detent. The
+     release is a touch slower than the grab, so the movement has a beginning and an
+     end rather than being a single constant glide. */
+  transition:transform .34s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;
+  box-shadow:0 2px 8px #0000001f}
+[dir=rtl] .mode-switch-thumb{transform:translateX(calc(var(--ms-index) * -100%))}
+.mode-switch-option{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:9px 12px;background:transparent;border:0;border-radius:9px;
+  font-size:11px;font-weight:550;color:var(--muted);cursor:pointer;white-space:nowrap;
+  transition:color .22s ease}
+.mode-switch-option>svg{width:15px;height:15px;flex-shrink:0;transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+.mode-switch-option:hover{color:var(--fg)}
+/* The label has to cross the thumb to get from muted to inverted, so it transitions a
+   little behind the thumb and arrives settled rather than flickering mid-slide. */
+.mode-switch-option.on{color:var(--bg);transition-delay:.06s}
+.mode-switch-option.on>svg{transform:scale(1.12)}
+.mode-switch:focus-within{outline:none;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--fg)}
+.mode-switch-option:focus-visible{outline:none}
+@media(max-width:520px){.mode-switch{max-width:100%}.mode-switch-option{min-height:44px;font-size:12px;padding:11px 8px}}
+
+/* ============================================================================
+   Chat.
+   ============================================================================ */
+.chat-log{display:flex;flex-direction:column;gap:14px;min-height:220px;max-height:min(56vh,560px);overflow-y:auto;padding:20px;background:var(--surface);border-radius:14px;scroll-behavior:smooth}
+.chat-turn{display:flex;flex-direction:column;gap:5px;max-width:82%;animation:chat-in .26s cubic-bezier(.22,1,.36,1) backwards}
+.chat-turn.them{align-self:flex-end;align-items:flex-end}
+.chat-turn.me{align-self:flex-start}
+.chat-who{font-size:8px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding-inline:3px}
+.chat-bubble{padding:12px 15px;border-radius:13px;font-size:12px;line-height:1.75;overflow-wrap:anywhere}
+.chat-turn.me .chat-bubble{background:var(--fg);color:var(--bg);border-end-start-radius:5px}
+.chat-turn.them .chat-bubble{background:var(--bg);color:var(--fg);border-end-end-radius:5px}
+.chat-bubble code{font-family:ui-monospace,monospace;font-size:11px;background:#00000012;padding:1px 5px;border-radius:4px}
+.chat-turn.them .chat-bubble code{background:#00000012}
+:root[data-theme=dark] .chat-bubble code{background:#ffffff1f}
+@keyframes chat-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+/* The typing dots. Three of them on a staggered delay rather than three animations, so
+   the group is one element in the accessibility tree and one thing to stop. */
+.chat-typing{display:inline-flex;gap:4px;align-items:center;padding:15px}
+.chat-typing i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:chat-dot 1.15s ease-in-out infinite}
+.chat-typing i:nth-child(2){animation-delay:.16s}
+.chat-typing i:nth-child(3){animation-delay:.32s}
+@keyframes chat-dot{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+.chat-form{display:flex;gap:9px;align-items:flex-end}
+.chat-form textarea{flex:1;min-height:46px;max-height:140px;resize:vertical;background:var(--surface);border-radius:11px;padding:13px 15px;font-size:12px;line-height:1.6}
+.chat-suggest{display:flex;flex-wrap:wrap;gap:7px}
+.chat-suggest button{background:var(--surface);border-radius:8px;padding:9px 12px;font-size:10px;color:var(--muted);transition:color .2s,transform .2s}
+.chat-suggest button:hover{color:var(--fg);transform:translateY(-2px)}
+.chat-note{display:flex;gap:9px;align-items:flex-start;background:var(--subtle);border-radius:11px;padding:14px 16px;font-size:10px;line-height:1.7;color:var(--muted)}
+.chat-note>svg{width:15px;height:15px;flex-shrink:0;margin-top:1px}
+.chat-model{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:9px;color:var(--muted)}
+.chat-clear{margin-inline-start:auto}
+
+/* The switch sits above the panel rather than inside it, so the panel's own top padding
+   is reduced by adjacency instead of by a modifier class - the panel has no opinion about
+   what is above it, and a second copy of its padding would show up in every breakpoint
+   block otherwise. */
+.agent-modes{max-width:900px;margin:0 auto;padding:44px 20px 0;display:flex;justify-content:center}
+.agent-modes+.agent-page{padding-top:20px}
+@media(max-width:520px){.agent-modes{padding:29px 15px 0}}

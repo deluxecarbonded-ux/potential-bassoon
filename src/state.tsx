@@ -78,6 +78,7 @@ const TOAST_BY_CODE:Record<string,string>={
   signIn:'signIn',
   noRoute:'agentNoRoute',
   aiUnavailable:'agentBusy',
+  'Invalid login credentials':'badCredentials',
 };
 export function toastKey(e:unknown):string{
   const code=e instanceof Error?e.message:'';

@@ -9,6 +9,10 @@
 // It is an editor, not an autopilot. There is no background work and no memory between
 // visits: every run starts from the instruction you type now, and nothing happens that
 // you did not ask for and then confirm.
+//
+// The owner check and the sign-in check are not here. Both belong to the page that holds
+// this panel and the chat beside it, so the question is asked once for both rather than
+// once per mode, and the answer arrives as a prop.
 import React,{useEffect,useRef,useState} from 'react';
 import {useApp,toastKey} from './state';
 import {num} from './i18n';
@@ -22,8 +26,8 @@ type Status={canWrite:boolean;route:string;writeNote:string;boundaries:{writable
 
 const BRIDGE=(import.meta.env.VITE_AGENT_BRIDGE||'http://127.0.0.1:8787').replace(/\/$/,'');
 
-export function Agent(){
-  const {t,api,sessions,numerals}=useApp();
+export function Agent({owner}:{owner:boolean}){
+  const {t,api,sessions,clients}=useApp();
   const [instruction,setInstruction]=useState('');
   const [status,setStatus]=useState<Status|null>(null);
   const [bridge,setBridge]=useState<boolean|null>(null);
@@ -42,9 +46,9 @@ export function Agent(){
   useEffect(()=>{
     let live=true;
     fetch(`${BRIDGE}/health`).then(r=>r.ok).then(ok=>{if(live)setBridge(ok);}).catch(()=>{if(live)setBridge(false);});
-    if(sessions.solo)api('solo','agent',{op:'status'}).then((s:Status)=>{if(live)setStatus(s);}).catch(()=>{if(live)setStatus(null);});
+    if(sessions.solo&&owner)api('solo','agent',{op:'status'}).then((s:Status)=>{if(live)setStatus(s);}).catch(()=>{if(live)setStatus(null);});
     return()=>{live=false;};
-  },[sessions.solo]);
+  },[sessions.solo,owner]);
 
   const canWrite=bridge===true||status?.canWrite===true;
 
@@ -127,10 +131,6 @@ export function Agent(){
     }catch(e){setProblem(t(toastKey(e)));}
     finally{setBusy('');}
   };
-
-  if(!sessions.solo){
-    return <div className="agent-page"><div className="agent-empty"><FileCode2 size={34}/><h1>{t('agent')}</h1><p className="muted">{t('agentSignIn')}</p></div></div>;
-  }
 
   const opLabel=(o:string)=>o==='create'?t('agentCreated'):o==='update'?t('agentChanged'):t('agentDeleted');
 
