@@ -10,6 +10,7 @@
 -- job and not the game's:
 --   auth.users        so the foreign keys resolve
 --   auth.uid()        so the policies and ensure_profile can be created
+--   auth.jwt()        so is_agent_owner can be created
 --   anon, authenticated, service_role   so every grant in section 5 has a role
 --   supabase_realtime the publication, so section 6 can add tables to it
 --
@@ -32,6 +33,16 @@ create or replace function auth.uid() returns uuid
 
 create or replace function auth.role() returns text
   language sql stable as $$ select coalesce(current_setting('request.jwt.claim.role', true), 'anon') $$;
+
+-- The decoded claims of the caller's token, which is what the platform's auth.jwt()
+-- returns and what is_agent_owner() reads the caller's address out of. Reading the
+-- session's email from the verified claims is the one place it can be trusted from: the
+-- address in the row is what the player typed at signup, and the address in the token is
+-- the account Supabase actually authenticated.
+create or replace function auth.jwt() returns jsonb
+  language sql stable as $$
+    select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
+  $$;
 
 do $$
 begin

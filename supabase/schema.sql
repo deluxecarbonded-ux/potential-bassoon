@@ -155,6 +155,7 @@ create table public.profiles (
   mode          text        not null check (mode in ('solo','arena')),
   display_name  text        not null check (char_length(display_name) between 2 and 24),
   email         text        not null default '',
+  username      text        not null,
   emblem        text        not null default '' check (emblem in ('','moon','crown')),
   wins          integer     not null default 0 check (wins >= 0),
   created_at    timestamptz not null default now(),
@@ -168,6 +169,31 @@ create table public.profiles (
 alter table public.profiles
   add constraint profiles_email_format
   check (email = '' or email ~* '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$');
+
+-- The account name, and what an agent owner row is matched on. Deliberately not
+-- display_name: that is the cosmetic name, the player can rename it, and the name other
+-- people see is deliberately not the form they sign in with. An owner row pointing at it
+-- would hand the agent to whoever picked the name up next.
+--
+-- The check is the same shape src/state.tsx accepts, so a name that passed the form still
+-- passes here. It is a table constraint for the reason the email one is.
+alter table public.profiles
+  add constraint profiles_username_format
+  check (username ~ '^[a-z0-9][a-z0-9._-]*[a-z0-9]$' and char_length(username) between 3 and 24);
+
+-- Unique across the whole table, not per mode, and that is a deliberate change. profiles is
+-- keyed (user_id, mode) because solo and arena are separate registrations, and the same
+-- username has always been allowed in both - two accounts, two passwords, two rows. A
+-- global index forbids that: the second registration now collides on the username. It is
+-- the cost of an owner lookup that resolves to exactly one person, which a per-mode index
+-- cannot promise. If registering one name in both modes matters more, drop this index and
+-- have agent_owner_match match on (o.username, p.mode) instead.
+create unique index profiles_username_key on public.profiles (username);
+
+comment on column public.profiles.username is
+  'The account name, lowercased, and what an agent owner row is matched on. Written once '
+  'when the profile is created and not editable afterwards, unlike display_name which the '
+  'player may rename and which is what other people see.';
 
 comment on column public.profiles.emblem is
   'Arena only, and only ever moon or crown. The empty default means "no emblem", '
@@ -426,6 +452,40 @@ comment on table private.round_answers is
   'The answers to every round of every match. Never granted, never in a policy, '
   'never published to realtime. Read only by room_action when grading an answer.';
 
+-- ----------------------------------------------------------------------------
+--  public.agent_owners - who may drive the build agent
+--
+--  A row names its owner two ways, and either is enough: email, which is the address the
+--  player gave at signup, and username, which is the name they sign in with. Both are
+--  needed because the address Supabase keys the account on is derived from the username
+--  rather than typed, so one of the two is always something the caller actually holds.
+--
+--  No client reads this table. Ownership is a yes/no question about the caller, so it is
+--  answered by is_agent_owner() and the rows stay unreadable - see section 4.
+-- ----------------------------------------------------------------------------
+
+create table public.agent_owners (
+  email      text        primary key,
+  username   text,
+  granted_at timestamptz not null default now(),
+  note       text,
+  constraint agent_owners_email_clean
+    check (email = lower(btrim(email)) and email like '%@%'),
+  constraint agent_owners_username_clean
+    check (username is null or
+           (username ~ '^[a-z0-9][a-z0-9._-]*[a-z0-9]$' and char_length(username) between 3 and 24))
+);
+
+-- Unique, so a username resolves to exactly one owner row and the match in
+-- agent_owner_match cannot be ambiguous.
+create unique index agent_owners_username_key
+  on public.agent_owners (username) where username is not null;
+
+comment on column public.agent_owners.username is
+  'Matches public.profiles.username, so an owner can be named by the name they sign in '
+  'with as well as by an address. At least one of email and username has to be present '
+  'for a row to mean anything, which is why neither is the whole identity.';
+
 
 
 
@@ -471,6 +531,34 @@ as $$
 $$;
 
 -- ----------------------------------------------------------------------------
+--  public.username_slug - the form a display name takes as an account name
+--
+--  Lowercased, because folding the account address from the lowercased name is what keeps
+--  sign-in case-insensitive, and anything that has to compare a name against a stored one
+--  has to compare them the same way src/state.tsx does. The character set stops short of
+--  anything that would change the shape of an address built around it.
+-- ----------------------------------------------------------------------------
+
+create or replace function public.username_slug(p_name text)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare v text;
+begin
+  v := lower(btrim(coalesce(p_name, '')));
+  v := regexp_replace(v, '[^a-z0-9._-]+', '-', 'g');
+  v := btrim(v, '._-');
+  v := btrim(left(v, 24), '._-');
+  -- Two players may pick the same display name, and a two-letter name cannot satisfy the
+  -- column's format on its own, so the floor is a real name rather than a rejected insert.
+  if char_length(v) < 3 then v := 'player'; end if;
+  return v;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 --  public.ensure_profile - create this mode's profile, wallet and starter kit
 --
 --  Called by the app the moment a session appears, and idempotent: on conflict do
@@ -480,6 +568,11 @@ $$;
 --
 --  Reads auth.uid() itself and takes no user_id, so it cannot be called on behalf of
 --  anyone else.
+--
+--  The conflict target is named rather than left bare. An unqualified on conflict do
+--  nothing covers every unique constraint, so it would swallow a username collision as
+--  quietly as the row it was meant to skip and leave a player holding a session and no
+--  profile. Naming it lets the username collision be reported as one.
 -- ----------------------------------------------------------------------------
 
 create or replace function public.ensure_profile(p_mode text, p_name text default 'Explorer')
@@ -494,9 +587,17 @@ begin
     raise exception 'Unauthorized';
   end if;
 
-  insert into public.profiles(user_id, mode, display_name)
-  values(auth.uid(), p_mode, left(coalesce(nullif(trim(p_name), ''), 'Explorer'), 24))
-  on conflict do nothing;
+  begin
+    insert into public.profiles(user_id, mode, display_name, username)
+    values(auth.uid(), p_mode,
+           left(coalesce(nullif(trim(p_name), ''), 'Explorer'), 24),
+           public.username_slug(p_name))
+    on conflict (user_id, mode) do nothing;
+  exception when unique_violation then
+    -- Phrased for the one test the signup form makes, so a name already in use is
+    -- reported as a name already in use instead of arriving as a failed request.
+    raise exception 'That username is already registered';
+  end;
 
   get diagnostics inserted = row_count;
 
@@ -511,6 +612,44 @@ begin
     end if;
   end if;
 end;
+$$;
+
+-- ----------------------------------------------------------------------------
+--  public.agent_owner_match / public.is_agent_owner - may this caller drive the agent
+--
+--  The match lives in one function so the browser and the edge function cannot come to
+--  disagree about who the owner is. agent_owner_match takes the user as an argument
+--  because the edge function authenticates with the service role and has no auth.uid()
+--  of its own; is_agent_owner is the same question asked from a session, and is the only
+--  one a client may call.
+--
+--  is_agent_owner takes no arguments at all, so it can only ever be answered about the
+--  caller - a client cannot ask whether somebody else owns the agent, and cannot learn
+--  who does, because the table behind it is never granted.
+-- ----------------------------------------------------------------------------
+
+create or replace function public.agent_owner_match(p_user uuid, p_email text)
+returns boolean
+language sql
+stable security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+      from public.agent_owners o
+     where (p_email is not null and o.email = lower(btrim(p_email)))
+        or exists (select 1 from public.profiles p
+                    where p.user_id = p_user and p.username = o.username)
+  );
+$$;
+
+create or replace function public.is_agent_owner()
+returns boolean
+language sql
+stable security definer
+set search_path = ''
+as $$
+  select public.agent_owner_match(auth.uid(), auth.jwt() ->> 'email');
 $$;
 
 -- ----------------------------------------------------------------------------
@@ -1269,6 +1408,22 @@ comment on table private.solo_challenges is
   'RLS enabled with no policy, which means deny. service_role bypasses RLS, so the '
   'only reader is an edge function.';
 
+-- ----------------------------------------------------------------------------
+--  public.agent_owners - RLS on, and no policy at all
+--
+--  No policy is the point. This table used to carry a SELECT policy open to any signed-in
+--  player, which published every owner's address to anyone who asked for the list. A
+--  client has no business reading it: ownership is answered by is_agent_owner(), which
+--  returns a boolean about the caller and nothing else, so deny is both the safer and the
+--  sufficient answer here.
+-- ----------------------------------------------------------------------------
+
+alter table public.agent_owners enable row level security;
+
+comment on table public.agent_owners is
+  'RLS enabled with no policy, which means deny. Ownership is asked through '
+  'is_agent_owner(), which can only answer about the caller.';
+
 
 -- ============================================================================
 --  SECTION 5. Grants
@@ -1312,6 +1467,13 @@ grant all on public.solo_progress   to service_role;
 grant all on public.rooms           to service_role;
 grant all on public.room_players    to service_role;
 grant all on public.round_questions to service_role;
+grant all on public.agent_owners    to service_role;
+
+-- The owner list, revoked by name. The platform pre-grants the client roles on a new
+-- table in this schema, so a table that is only ever meant to be read through a function
+-- has to say so; without this, a fresh database hands every signed-in player the whole
+-- list and RLS alone is what stops them, which is one policy away from a leak.
+revoke all on public.agent_owners from anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 --  Function EXECUTE
@@ -1321,6 +1483,11 @@ grant all on public.round_questions to service_role;
 --  the caller. The five that change state are service_role only, so the edge functions
 --  are the only route to them and a stolen anon key cannot create a challenge, grade
 --  an answer or move coins.
+--
+--  is_agent_owner joins them: a boolean test about the caller, so it is safe to expose
+--  for the same reason is_room_member is. agent_owner_match, the version that takes the
+--  user as an argument, is not - that one is how a caller could ask about somebody else,
+--  so it stays with service_role, which is the role the agent function runs as.
 -- ----------------------------------------------------------------------------
 
 revoke all on function public.ensure_profile(text, text) from public, anon;
@@ -1328,6 +1495,16 @@ grant execute on function public.ensure_profile(text, text) to authenticated, se
 
 revoke all on function public.is_room_member(uuid) from public, anon;
 grant execute on function public.is_room_member(uuid) to authenticated, service_role;
+
+revoke all on function public.is_agent_owner() from public, anon;
+grant execute on function public.is_agent_owner() to authenticated;
+
+revoke all on function public.agent_owner_match(uuid, text) from public, anon, authenticated;
+grant execute on function public.agent_owner_match(uuid, text) to service_role;
+
+-- The slug is a pure function of its argument, so there is nothing to keep out of it.
+revoke all on function public.username_slug(text) from public, anon, authenticated;
+grant execute on function public.username_slug(text) to authenticated, service_role;
 
 revoke all on function public.create_solo_challenge(uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.create_solo_challenge(uuid, jsonb) to service_role;

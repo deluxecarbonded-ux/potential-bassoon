@@ -41,7 +41,13 @@ Deno.serve(async(req:Request)=>{
  try{
   // The agent carries whole file contents, so it needs a far larger body than a game
   // action does. The caller is still a signed-in player either way.
-  const {user,body}=await context(req,{maxBytes:1572864});
+  const {db,user,body}=await context(req,{maxBytes:1572864});
+  // ...and a signed-in player is not enough. The guard below decides what may be written;
+  // this decides who may ask, and without it any account could reach the repository, read
+  // it, and propose an edit to it. Ownership is matched on the account address or on the
+  // profile username, because the address Supabase keys the account on is derived from the
+  // username rather than typed, so one of the two is always something the caller holds.
+  if(!await ownerOf(db,user))return json(req,{error:'forbidden'},403);
   const op=String(body?.op||'');
   if(op==='status')return json(req,{...status(),user:user.id});
   if(op==='files')return json(req,await files(body));
@@ -51,6 +57,24 @@ Deno.serve(async(req:Request)=>{
 });
 
 /* ------------------------------------------------------------------ reaching the files */
+
+/**
+ * Whether this caller is one of the accounts allowed to drive the agent.
+ *
+ * Asked of the database rather than answered here, so the browser's is_agent_owner() and
+ * this cannot come to disagree about who the owner is. The underlying function is granted
+ * to the service role alone, which is why the user is passed in rather than read from a
+ * session: this function authenticates with the service role and has no session of its own.
+ */
+async function ownerOf(
+ db:{rpc:(fn:string,args:Record<string,unknown>)=>Promise<{data:unknown;error:unknown}>},
+ user:{id:string;email?:string},
+){
+ const {data,error}=await db.rpc('agent_owner_match',{p_user:user.id,p_email:user.email??null});
+ // A failed lookup is a refusal, not a pass. Anything else turns a database outage into an
+ // open door, which is the one direction this check is allowed to fail in.
+ return !error&&data===true;
+}
 
 const repo=()=>(Deno.env.get('AGENT_REPO')||'deluxecarbonded-ux/potential-bassoon').trim();
 const token=()=>(Deno.env.get('AGENT_GITHUB_TOKEN')||'').trim();
